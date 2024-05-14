@@ -12,8 +12,8 @@
 % \ShortPresentation    % uncomment for (final) Short Conference Presentation
 %
 % --- for  CGF Journal
-% \JournalSubmission    % uncomment for submission to Computer Graphics Forum
- \JournalPaper         % uncomment for final version of Journal Paper
+\JournalSubmission    % uncomment for submission to Computer Graphics Forum
+%  \JournalPaper         % uncomment for final version of Journal Paper (NOTE: this won't have page numbers)
 %
 % --- for  CGF Journal: special issue
 % \SpecialIssueSubmission    % uncomment for submission to Computer Graphics Forum, special issue
@@ -52,13 +52,142 @@
 
 % \input{EGauthorGuidelines-body.inc}
 
-\title{the title}
+\title[Polygonal Model Compression]%
+      {Polygonal Model Compression with Graph Symmetries}
 
-\begin{abstract}
-    the abstract
-\end{abstract}
+% for anonymous conference submission please enter your SUBMISSION ID
+% instead of the author's name (and leave the affiliation blank) !!
+\author[Andrej Jočić]
+{\parbox{\textwidth}{\centering% D.\,W. Fellner\thanks{Chairman Eurographics Publications Board}$^{1,2}$
+        Andrej Jočić$^{1}$ 
+%        S. Spencer$^2$\thanks{Chairman Siggraph Publications Board}
+        }
+        \\
+% For Computer Graphics Forum: Please use the abbreviation of your first name.
+{\parbox{\textwidth}{\centering %$^1$TU Darmstadt \& Fraunhofer IGD, Germany\\
+         $^1$University of Ljubljana, Faculty of Computer and Information Science, Slovenia
+%        $^2$ Another Department to illustrate the use in papers from authors
+%             with different affiliations
+       }
+}
+}
+% ------------------------------------------------------------------------
 
+% if the Editors-in-Chief have given you the data, you may uncomment
+% the following five lines and insert it here
+%
+% \volume{36}   % the volume in which the issue will be published;
+% \issue{1}     % the issue number of the publication
+% \pStartPage{1}      % set starting page
+
+
+%-------------------------------------------------------------------------
 \begin{document}
-Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed non risus. Suspendisse lectus tortor, dignissim sit amet, adipiscing nec, ultricies sed, dolor. Cras elementum ultrices diam. Maecenas ligula massa, varius a, semper congue, euismod non, mi. Proin porttitor, orci nec nonummy molestie, enim est eleifend mi, non fermentum diam nisl sit amet erat. Duis semper. Duis arcu massa, scelerisque vitae, consequat in, pretium a, enim. Pellentesque congue. Ut in risus volutpat libero pharetra tempor. Cras vestibulum bibendum augue. Praesent egestas leo in pede. Praesent blandit odio eu enim. Pellentesque sed dui ut augue blandit sodales. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Aliquam nibh. Mauris ac mauris sed pede pellentesque fermentum. Maecenas adipiscing ante non diam sodales hendrerit.
+
+% uncomment for using teaser
+% \teaser{
+%  \includegraphics[width=\linewidth]{eg_new}
+%  \centering
+%   \caption{New EG Logo}
+% \label{fig:teaser}
+%}
+
+\maketitle
+%-------------------------------------------------------------------------
+\begin{abstract}
+
+TODO the abstract
+%-------------------------------------------------------------------------
+%  ACM CCS 1998
+%  (see http://www.acm.org/about/class/1998)
+% \begin{classification} % according to http:http://www.acm.org/about/class/1998
+% \CCScat{Computer Graphics}{I.3.3}{Picture/Image Generation}{Line and curve generation}
+% \end{classification}
+%-------------------------------------------------------------------------
+%  ACM CCS 2012
+   (see http://www.acm.org/about/class/class/2012)
+%The tool at \url{http://dl.acm.org/ccs.cfm} can be used to generate
+\begin{CCSXML}
+    <ccs2012>
+    <concept>
+    <concept_id>10010147.10010371.10010396.10010397</concept_id>
+    <concept_desc>Computing methodologies~Mesh models</concept_desc>
+    <concept_significance>500</concept_significance>
+    </concept>
+    <concept>
+    <concept_id>10010147.10010371.10010387.10010394</concept_id>
+    <concept_desc>Computing methodologies~Graphics file formats</concept_desc>
+    <concept_significance>300</concept_significance>
+    </concept>
+    <concept>
+    <concept_id>10003752.10003809.10010031.10002975</concept_id>
+    <concept_desc>Theory of computation~Data compression</concept_desc>
+    <concept_significance>100</concept_significance>
+    </concept>
+</ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Computing methodologies~Mesh models}
+\ccsdesc[300]{Computing methodologies~Graphics file formats}
+\ccsdesc[100]{Theory of computation~Data compression}
+
+
+\printccsdesc   
+\end{abstract}  
+%-------------------------------------------------------------------------
+\section{Introduction}
+
+Polygonal models are widely used for representing 3D objects in computer graphics. With increased rendering system capabilities and the desire for greater precision, the size of these models has been increasing. To cut down transmission and static storage costs, specialized compression schemes have been developed.
+In previously established \cite{meshCompressionSurvey} terms, we will be focusing on lossless single-rate global compression of static polygonal models. This means that we will be considering fixed (non-evolving) data, which will be decompressed it all at once (without progressive transmission at different levels of detail) and in its entirety (not focusing on specific regions of the model as requested by the user).
+
+The information we usually store is the model's geometry (positions of vertices), connectivity / topology (incidence relations among elements), and optionally also attributes (normals, colours, etc.).
+Typically the connectivity information takes up the most space (around twice as much as the goemetry information in a triangle mesh homeomorphic to a sphere \cite{rossignac1999edgebreaker}), so it is the most important to compress.
+Many compression methods focus exclusively on manifold triangle meshes (or another constrained structure) to get the best possible results.  
+In this paper we will consider the case of arbitrary polygonal models. Since the connectivity relations can be represented as an undirected graph, we can reduce the problem to that of graph compression.
+Specifically, we will be exploiting symmetries in the graph, which can often occur in the graphical domain.
+
+\subsection{Related Work}
+
+% TODO: slap some survey papers in here (graph compression, mesh compression)
+
+% TODO: list connectivity comp. rates from survey table 1
+this an that paper hasdealt with symmetry-based mesh compression, but to our knowledge it has not been done with automorphisms.
+
+\section{Methods}
+
+Čibej and Mihelič \cite{cibej2021automorphisms} have developed a method general graph compression based on automorphisms. They define
+\textit{symmetry-compressible} graphs $G$
+as ones that can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorhpism (connectivity-preserving vertex permutation) $\pi$ of $G$.
+Formally, $G \in \mathcal{S}\mathcal{C}$ if $\exists \pi \in Aut(G)$ such that $|G^\pi| + |\pi| < |G|$, where $|\cdot|$ denotes a measure of representation size (e.g. number of edges). 
+
+% TODO: define near symmetry-compressible graphs
+
+
+The main computational issue is finding a (compressive) automorphism. The paper presents two approaches: graphlet search and bipartite completion.
+As Theorem TODO shows, we can just search for SC subgraphs.
+
+\subsection{Graphlet Search}
+
+\subsection{Bipartite Completion}
+
+Though a star graph is a common occurence in the graphical domain, it is unfortunately not symmetry-compressible (measuring size by number of edges) (??) do we only need NSC?
+
+
+\section{Results}
+
+
+\section{Discussion}
+
+\subsection{Conclusions}
+
+Please direct any questions to the production editor in charge of
+these proceedings.
+
+%-------------------------------------------------------------------------
+
+%\bibliographystyle{eg-alpha}
+\bibliographystyle{eg-alpha-doi}
+
+\bibliography{references}
 
 \end{document}
