@@ -155,6 +155,8 @@ this an that paper hasdealt with symmetry-based mesh compression, but to our kno
 
 \section{Methods}
 
+If we are willing to give up the vertex information (and infer positions with a layout algorithm), we can just compress the connectivity information. In this case compressing the face incidence graph is a viable option, since we don't have to list the vertices of each face but just an arbitrary identifier. Then we can get the 1-skeleton of the model by computing the dual of the decompressed face incidence graph.
+
 Čibej and Mihelič \cite{cibej2021automorphisms} have developed a method general graph compression based on automorphisms. They define
 \textit{symmetry-compressible} graphs $G$
 as ones that can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorhpism (connectivity-preserving vertex permutation) $\pi$ of $G$.
@@ -166,22 +168,33 @@ Formally, $G \in \mathcal{S}\mathcal{C}$ if $\exists \pi \in Aut(G)$ such that $
 The main computational issue is finding a (compressive) automorphism. The paper presents two approaches: graphlet search and bipartite completion.
 As Theorem TODO shows, we can just search for SC subgraphs.
 
-\subsection{Graphlet Search}
-
 \subsection{Bipartite Completion}
 
 Though a star graph is a common occurence in the graphical domain, it is unfortunately not symmetry-compressible (measuring size by number of edges) (??) do we only need NSC?
 
+\subsection{Graphlet Search}
+This one is a lot slower, but may be more appropriate for our case (if we're not compressing on the fly during transmission).
+
+\subsection{Compressed file format}
+Most commonly used file formats for storing 3D models have the following structure: a header with metadata, then the vertex data, and finally the connectivity data. Connectivity data is usually stored as a list of faces, where each face is a list of vertex indices. This means the graph we will be compressing is the 1-skeleton of the model. Alternatively we could compress the face adjacency graph, but this would just inflate such an input file.
+
+When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
 
 \section{Results}
 
 
 \section{Discussion}
 
+The 1-skeletons of manifold meshes (which the vast majority of real-world models are) are planar graphs. So the face adjacency graph, which is the dual of the 1-skeleton, is also planar. This means these graphs are very sparse with $m = O(n)$, where $n$ is the number of vertices and $m$ is the number of edges. This easily explains the poor performance of the bipartite completion method, since many edges have to be added to make a complete bipartite subgraph.  
+
+
+\section{Future Work}
+\begin{itemize}
+        \item bit-efficient encoding (instead of pickle dump)
+\end{itemize}
+
 \subsection{Conclusions}
 
-Please direct any questions to the production editor in charge of
-these proceedings.
 
 %-------------------------------------------------------------------------
 

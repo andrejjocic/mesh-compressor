@@ -1,4 +1,14 @@
+*.zip
 *.aux
 *.log
+*.blg
+*.bbl
+*.fdb_latexmk
+*.fls
 *.synctex.gz
-*.log
+*.brf
+*.lbl
+**/__pycache__/*
+
+data/*
+src/test.ipynb
