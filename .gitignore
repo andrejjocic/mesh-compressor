@@ -8,6 +8,8 @@
 *.synctex.gz
 *.brf
 *.lbl
+*.pdf
+
 **/__pycache__/*
 
 data/*

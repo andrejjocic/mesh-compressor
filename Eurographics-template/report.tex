@@ -162,6 +162,7 @@ If we are willing to give up the vertex information (and infer positions with a 
 as ones that can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorhpism (connectivity-preserving vertex permutation) $\pi$ of $G$.
 Formally, $G \in \mathcal{S}\mathcal{C}$ if $\exists \pi \in Aut(G)$ such that $|G^\pi| + |\pi| < |G|$, where $|\cdot|$ denotes a measure of representation size (e.g. number of edges). 
 
+A class of graphs more amenable to practical compression are \textit{near symmetry-compressible} graphs. 
 % TODO: define near symmetry-compressible graphs
 
 
@@ -169,6 +170,8 @@ The main computational issue is finding a (compressive) automorphism. The paper 
 As Theorem TODO shows, we can just search for SC subgraphs.
 
 \subsection{Bipartite Completion}
+
+Though in principle we could use a single structure instead of a list, this may result in a non-disjoint set of cycles for the permutation. We could get around this by considering all options at decompression??
 
 Though a star graph is a common occurence in the graphical domain, it is unfortunately not symmetry-compressible (measuring size by number of edges) (??) do we only need NSC?
 
@@ -191,6 +194,8 @@ The 1-skeletons of manifold meshes (which the vast majority of real-world models
 \section{Future Work}
 \begin{itemize}
         \item bit-efficient encoding (instead of pickle dump)
+        \item graphlet heuristic sort with eg. orbit counting stats
+        \item alternative automorphism search algorithms, suited to the graphical domain
 \end{itemize}
 
 \subsection{Conclusions}

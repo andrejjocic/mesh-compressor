@@ -11,6 +11,7 @@ from tqdm import tqdm
 from plyfile import PlyData, PlyElement
 import networkx as nx
 import network_utils
+import symmetry_compressor as symm
 
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
@@ -76,8 +77,12 @@ def face_adjacency_graph(data: PlyData) -> nx.Graph:
     
 
 if __name__ == "__main__":
-    data = PlyData.read("data/gemstone_ply/Gemstone.ply")
+    data = PlyData.read(r"data\MeshLab_sample_meshes\non_manif_hole.ply")
+
     S = skeleton(data)
-    network_utils.info(S)
+    print(S)
+    print(type((next(iter(S.nodes)))))
+    Scomp = symm.compress_bipartite(S)
+    print(Scomp)
     # F = face_adjacency_graph(data)
     # network_utils.info(F)
