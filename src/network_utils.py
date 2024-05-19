@@ -69,6 +69,7 @@ def read_pajek(filename: str, data_folder=DEFAULT_DATA_FOLDER,
         nodes = [] # OPT pre-allocate given header
 
         for line in file:
+            if line.startswith("%"): continue # skip comments
             if line.startswith("*"):
                 match line.split()[0][1:]: # TODO extract m for optional progressbar
                     case "edges": G = nx.MultiGraph(name=filename)

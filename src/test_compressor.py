@@ -6,7 +6,7 @@ from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
 from symmetry_compressor import *
 import network_utils as net
-
+import random
 
 class TestCompressor(unittest.TestCase):
 
@@ -54,13 +54,69 @@ class TestCompressor(unittest.TestCase):
     def test_karate(self):
         karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
         assert len(next(iter(karate.edges))) == 2 # edge labels may break something
-        C = compress_bipartite(karate)
+        C = compress_bipartite(karate, caching_mode=CachingMode.NONE)
         self.assertEqual(C.size, 55, msg="maybe due to different vertex ordering?") # [ČM21] table 3
         karate_dec = C.decompress()
         self.assertEqualGraphs(karate, karate_dec)
+        
+        C = compress_bipartite(karate, caching_mode=CachingMode.DYNAMIC)
+        self.assertLessEqual(C.relative_efficiency, 1)
+        self.assertEqual(C.size, 55, msg="maybe due to different vertex ordering?")
+        karate_dec = C.decompress()
+        self.assertEqualGraphs(karate, karate_dec)        
+        
+        Cstat = compress_bipartite(karate, caching_mode=CachingMode.STATIC)
+        self.assertLessEqual(Cstat.relative_efficiency, C.relative_efficiency)
+        self.assertLessEqual(0, Cstat.relative_efficiency)
+        self.assertEqualGraphs(karate, Cstat.decompress())        
+
+
+    def assertValidEfficiency(self, eff: float):
+        self.assertGreaterEqual(eff, 0)
+        self.assertLessEqual(eff, 1)
+
+    def validateBipartiteCompression(self, G: nx.Graph, try_cacheless=False):
+        if try_cacheless:
+            C = compress_bipartite(G, caching_mode=CachingMode.NONE)
+            rel_eff = C.relative_efficiency
+            self.assertValidEfficiency(rel_eff)
+            self.assertEqualGraphs(G, C.decompress())
+        else:
+            rel_eff = None
+
+        C = compress_bipartite(G, caching_mode=CachingMode.DYNAMIC)
+        self.assertValidEfficiency(C.relative_efficiency)
+        if rel_eff is not None:
+            self.assertAlmostEqual(C.relative_efficiency, rel_eff, places=1, msg="caching changes efficiency (different tie-breaks?)")
+
+        self.assertEqualGraphs(G, C.decompress())
+
+        Cstat = compress_bipartite(G, caching_mode=CachingMode.STATIC)
+        self.assertValidEfficiency(Cstat.relative_efficiency)
+        self.assertLessEqual(Cstat.relative_efficiency, C.relative_efficiency)
+        self.assertEqualGraphs(G, Cstat.decompress())
+
+    def test_bipart_small_er(self):
+        G = nx.erdos_renyi_graph(n=20, p=0.75)
+        self.validateBipartiteCompression(G, try_cacheless=True)
+    
+    def test_bipart_big_er(self):
+        G = nx.erdos_renyi_graph(n=40, p=0.5)
+        self.validateBipartiteCompression(G, try_cacheless=False)
+    
+    def test_complete_bipartite(self):
+        G = nx.complete_bipartite_graph(3, 4)
+        self.validateBipartiteCompression(G, try_cacheless=True)
+
+    def test_noncomplete_bipartite(self):
+        u, v = 3, 5
+        G = nx.complete_bipartite_graph(u, v)
+        for _ in range(2):
+            G.remove_edge(random.randint(0, u-1), random.randint(u, u+v-1))
+        self.validateBipartiteCompression(G, try_cacheless=True)
+
 
     # TODO: assert some things from paper theorems (trees not compressible...)
-
 
     # def test_cliques_complete(self):
     #     G = nx.complete_graph(5)
@@ -74,19 +130,10 @@ class TestCompressor(unittest.TestCase):
     #     G = nx.star_graph(5)
     #     self.test_bipartite_compression(G)
 
-    # def test_cliques_bipartite(self):
-    #     G = nx.complete_bipartite_graph(3, 4)
-    #     self.test_bipartite_compression(G)
-
     # def test_cliques_random(self):
     #     G = nx.random_regular_graph(3, 10)
     #     self.test_bipartite_compression(G)
 
-    # def test_cliques_er(self):
-    #     G = nx.erdos_renyi_graph(n=5, p=0.75)
-    #     # nx.draw(G, with_labels=True); plt.show()
-    #     self.test_bipartite_compression(G)
-    
 
 
 if __name__ == "__main__":

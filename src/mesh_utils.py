@@ -74,15 +74,40 @@ def face_adjacency_graph(data: PlyData) -> nx.Graph:
             raise ValueError("Non-manifold mesh detected!")
         
     return G
+
+
+def assertEqualGraphs(g1: nx.Graph, g2: nx.Graph):
+    assert g1.number_of_nodes() == g2.number_of_nodes()
+    assert g1.number_of_edges() == g2.number_of_edges()
+    # no need to complicate with isomorphism test, decompressed graph
+    # should have the same nodes and edges (provided no isolated nodes?)
+    assert set(g1.nodes) == set(g2.nodes)
+    assert set(g1.edges) == set(g2.edges)
+
+
+def compress_ply(input_file: str, output_file: str):
+    data = PlyData.read(input_file)
+    S = skeleton(data)
+    Scomp = symm.compress_bipartite(S, caching_mode=symm.CachingMode.DYNAMIC)
+    # TODO: copy header and vertex data from input_file to output_file
+    Scomp.append_to_file(output_file)
     
 
 if __name__ == "__main__":
     data = PlyData.read(r"data\MeshLab_sample_meshes\non_manif_hole.ply")
-
     S = skeleton(data)
     print(S)
-    print(type((next(iter(S.nodes)))))
-    Scomp = symm.compress_bipartite(S)
+    # Sc_stat = symm.compress_bipartite(S, caching_mode=symm.CachingMode.STATIC)
+    # print(Sc_stat)
+    # assertEqualGraphs(S, Sc_stat.decompress())
+    # print("-"*80)
+    Scomp = symm.compress_bipartite(S, caching_mode=symm.CachingMode.DYNAMIC)
     print(Scomp)
+    # Scomp.append_to_file("test.nscomp")
+    assertEqualGraphs(S, Scomp.decompress())
+
     # F = face_adjacency_graph(data)
     # network_utils.info(F)
+    # Fcomp = symm.compress_bipartite(F, caching_mode=symm.CachingMode.DYNAMIC)
+    # print(Fcomp)
+    # assertEqualGraphs(F, Fcomp.decompress())
