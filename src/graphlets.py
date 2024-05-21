@@ -8,17 +8,8 @@ from typing import *
 from collections import defaultdict
 import networkx.algorithms.isomorphism as iso
 import json
-
-@dataclass
-class SCGraphlet:
-    """Symmetry-compressed graphlet"""
-    atlas_index: int
-    """index in the graph atlas"""
-    compressive_auto_rank: int
-    """rank of the most compressive automorphism"""
-
-    def expand(self, index_map: ..., atlas: List[nx.Graph]) -> nx.Graph:
-        pass
+import network_utils as net
+import struct
 
 
 def repr_size(perm: Permutation) -> int:
@@ -30,39 +21,24 @@ def repr_size(perm: Permutation) -> int:
     return s
 
 
-def cache_SC_graphlets(min_size=4, max_size=7, cache_dir="cache"):
-    """cache symmetry-compressed representation of graphlets (one file for each size)"""
-    assert max_size <= 7
-
-    atlas = nx.graph_atlas_g() # all graphs up to 7 nodes, sorted by number of nodes
-    i = 0
-    while atlas[i].number_of_nodes() < min_size:
-        i += 1 # OPT: figure out how to skip to min_size directly
-
-    while atlas[i].number_of_nodes() <= max_size:
-        G = atlas[i]
-
-    raise NotImplementedError("TODO copy code from ipynb")
-
-
 @dataclass
 class AtlasGraphlet:
-    """Graphlet from the graph atlas"""
+    """Identifier of a graphlet from the graph atlas"""
     index: int
     """index in the graph atlas"""
     efficiency: float
     """compression efficiency of the graphlet"""
     # TODO: just add the atlas as an attribute?
 
-    def expand(self, node_mapping: Dict[int,int], atlas: List[nx.Graph]) -> nx.Graph:
+    def expand(self, node_mapping: List[int], atlas: List[nx.Graph]) -> nx.Graph:
         """expand the graphlet to a full graph
         ### Arguments
-        - node_mapping: mapping from output nodes to 0,1,2,..,n-1
+        - node_mapping: the i-th node in the graphlet is mapped to node_mapping[i]-th node in the full graph
         - atlas: list of graphs in the atlas
         """
         G = atlas[self.index]
-        assert set(node_mapping.values()) == set(range(len(G.number_of_nodes())))
-        return nx.relabel_nodes(G, {old: new for new, old in node_mapping.items()}, copy=True) # don't modify the atlas!
+        assert len(node_mapping) == G.number_of_nodes()
+        return nx.relabel_nodes(G, dict(enumerate(node_mapping)), copy=True) # don't modify the atlas!
     
 
 
@@ -111,46 +87,167 @@ def load_atlas_efficiency(n_min=3, n_max=7, cache_dir="cache") -> List[AtlasGrap
 
     return graphlets
 
-def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=True) -> ...:
+
+class AtlasCompressedGraph:
+    """Graph compressed using the graph atlas"""
+
+    residual: nx.Graph
+    """the uncompressed edges of the graph"""
+    full_size: int
+    """size of the full graph, as number of vertex indices"""
+    compressed_graphlets: List[Tuple[AtlasGraphlet, List[int]]]
+    """compressed subgraphs, as a list of graphlet IDs and node mappings"""
+    atlas: Optional[List[nx.Graph]]
+    """optional reference to the graph atlas"""
+
+    def __init__(self, G: nx.Graph, take_ownership=False, atlas: Optional[List[nx.Graph]] = None):
+        self.residual = G if take_ownership else G.copy()
+        self.full_size = 2 * G.number_of_edges()
+        self.compressed_graphlets = []
+        self.atlas = atlas
+
+    def __repr__(self) -> str:
+        if self.full_size is None: # deserialized
+            return f"AtlasCompressed({self.residual.name})"
+        else:
+            return f"AtlasCompressed({self.residual.name}, eff={self.relative_efficiency:.3f})"
+
+    def compress(self, subgraph: nx.Graph, graphlet: AtlasGraphlet, mapped_nodes: List[int]):
+        """replace the subgraph with a compact representation"""
+        assert self.atlas[graphlet.index].number_of_nodes() == len(mapped_nodes)
+
+        self.residual.remove_edges_from(subgraph.edges)
+        self.compressed_graphlets.append((graphlet, mapped_nodes)) # TODO: try the other encoding if graphlets often reoccur
+
+    def decompress(self, in_place=True) -> nx.Graph:
+        graphlet_atlas = nx.graph_atlas_g() if self.atlas is None else self.atlas
+        full = self.residual if in_place else self.residual.copy()
+
+        for graphlet_id, mapped_nodes in self.compressed_graphlets:
+            full.add_edges_from(graphlet_id.expand(mapped_nodes, graphlet_atlas).edges)
+
+        return full
+    
+    @property
+    def relative_efficiency(self) -> float:
+        return (self.full_size - self.size) / self.full_size
+    
+    @property
+    def size(self) -> int:
+        """size of the compressed graph, as number of vertex indices"""
+        return 2 * self.residual.number_of_edges() + sum(1 + len(nodemap) for _, nodemap in self.compressed_graphlets)
+
+
+    def serialize(self, filename: str) -> None:
+        # OPT: some sort of buffering
+        with open(filename, "wb") as f:
+            # encode the residual graph
+            f.write(struct.pack("<I", self.residual.number_of_edges()))
+            for edge in self.residual.edges:
+                f.write(struct.pack("<II", *edge))
+
+            # encode the compressed graphlets
+            f.write(struct.pack("<I", len(self.compressed_graphlets)))
+            for graphlet, nodemap in self.compressed_graphlets:
+                f.write(struct.pack("<I", graphlet.index))
+                # we can infer the length of the nodemap from the graphlet
+                for node in nodemap:
+                    f.write(struct.pack("<I", node))
+
+
+    @staticmethod
+    def deserialize(filename: str) -> "AtlasCompressedGraph":
+        filename = Path(filename)
+        SIZEOF_INT = 4 # bytes
+
+        with open(filename, "rb") as f:
+            # unpack the residual graph
+            G = nx.Graph(name=f"deserialized_{filename.stem}")
+            num_edges, = struct.unpack("<I", f.read(SIZEOF_INT))
+            for _ in range(num_edges):
+                u, v = struct.unpack("<II", f.read(2 * SIZEOF_INT))
+                G.add_edge(u, v)
+
+            acg = AtlasCompressedGraph(G, take_ownership=True, atlas=nx.atlas.graph_atlas_g())
+            acg.full_size = None
+            
+            # unpack the compressed graphlets
+            num_graphlets, = struct.unpack("<I", f.read(SIZEOF_INT))
+            for _ in range(num_graphlets): # pbar?
+                graphlet_idx, = struct.unpack("<I", f.read(SIZEOF_INT))
+                n = acg.atlas[graphlet_idx].number_of_nodes()
+                nodemap = struct.unpack("<" + "I"*n, f.read(n * SIZEOF_INT))
+                acg.compressed_graphlets.append((
+                    AtlasGraphlet(graphlet_idx, efficiency=None),
+                    list(nodemap)
+                ))
+
+        return acg
+
+        
+
+
+def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=True, print_stats=False) -> AtlasCompressedGraph:
     # adapted version of [ČM21] algorithm 1
     if max_graphlet_sz > 7:
         raise NotImplementedError("only graphlets up to size 7 are supported")
 
     graphlet_atlas = nx.graph_atlas_g()
-    G = G.copy() # OPT: modify G in place (for proper benchmarking)
+    Gcomp = AtlasCompressedGraph(G, take_ownership=False, atlas=graphlet_atlas)
     graphlets = load_atlas_efficiency(n_max=max_graphlet_sz)
-    if sort_by_efficiency:
+    if sort_by_efficiency: # OPT: just have the cache sorted by efficiency
         graphlets.sort(key=lambda g: g.efficiency, reverse=True)
 
-    compressed_subgraphs = []
+    graphlet_stats = defaultdict(int)
 
-    for graphlet_id in tqdm(graphlets, desc="looping over graphlets"):
+    for graphlet_id in tqdm(graphlets, desc="looping over graphlets", ncols=100):
         graphlet = graphlet_atlas[graphlet_id.index]
-        matcher = iso.GraphMatcher(G, G2=graphlet, node_match=None, edge_match=None) # node and edge attributes are ignored
+        matcher = iso.GraphMatcher(Gcomp.residual, G2=graphlet, node_match=None, edge_match=None) # node and edge attributes are ignored
         # TODO: find find a *maximal* set of edge-disjoint isomorphic subgraphs
         for isomorphism in matcher.subgraph_isomorphisms_iter():
             # for subgraph on {0,1,2,3}, an isomorphism looks something like {4: 0, 13: 1, 2: 2, 44: 3}
             inv_iso = {v: k for k, v in isomorphism.items()}
             subgraph = nx.relabel_nodes(graphlet, mapping=inv_iso, copy=True)
-            if any(not G.has_edge(*edge) for edge in subgraph.edges):
+            if any(not Gcomp.residual.has_edge(*edge) for edge in subgraph.edges):
                 continue # a part of this subgraph has already been compressed (with the same graphlet)
             
-            # compress the subgraph
             mapped_nodes = [inv_iso[i] for i in range(subgraph.number_of_nodes())]
-            compressed_subgraphs.append((graphlet_id, mapped_nodes))
-            G.remove_edges_from(subgraph.edges)
+            Gcomp.compress(subgraph, graphlet_id, mapped_nodes)
+            graphlet_stats[graphlet_id.index] += 1
 
-    return G, compressed_subgraphs
+    if print_stats:
+        print("Graphlet statistics:")
+        for graphlet_idx, count in graphlet_stats.items():
+            print(f"graphlet {graphlet_idx}: {count} occurrences")
+
+    return Gcomp
 
 
 
 if __name__ == "__main__":
     # cache_atlas_efficiency()
-    G = nx.erdos_renyi_graph(n=20, p=0.75)
-    G_resid, compressed_subgraphs = compress_subgraphlets(G, max_graphlet_sz=4)
+    # G = nx.erdos_renyi_graph(n=20, p=0.75)
+    G = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
+    Gcomp = compress_subgraphlets(G, max_graphlet_sz=6, sort_by_efficiency=True)
+    print(Gcomp)
 
-    orig_size = 2 * G.number_of_edges() # measured as number of vertex indices
-    atlas = nx.graph_atlas_g()
-    compressed_size = 2 * G_resid.number_of_edges() + sum(1 + atlas[graphlet.index].number_of_nodes() for graphlet, _ in compressed_subgraphs)
+    # graphlet_idx2node_sets = defaultdict(list)
+    # for graphlet, node_set in compressed_subgraphs:
+    #     graphlet_idx2node_sets[graphlet.index].append(node_set)
 
-    print(f"original size: {orig_size}, compressed size: {compressed_size}, relative efficiency: {1 - compressed_size / orig_size:.3f}")
+    # for graphlet_idx, node_sets in graphlet_idx2node_sets.items():
+    #     net.draw_graph(atlas[graphlet_idx], title=str(node_sets))
+
+    bin_path = Path("karate_compressed.acgf")
+    Gcomp.serialize(bin_path)
+
+    Gcomp2 = AtlasCompressedGraph.deserialize(bin_path)
+    print(Gcomp2)
+    G2 = Gcomp2.decompress()
+    print(G2)
+    # print(set(G.edges) == set(G2.edges))
+    # print(sorted(G.edges))
+    # print(sorted(G2.edges))
+    print(nx.is_isomorphic(G, G2))
+
+    bin_path.unlink()

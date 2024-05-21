@@ -14,6 +14,7 @@ import network_utils
 import symmetry_compressor as symm
 import pickle
 import pathlib
+import graphlets
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
     """Export a triangulation to a PLY file."""
@@ -61,7 +62,7 @@ def face_adjacency_graph(data: PlyData) -> nx.Graph:
     NOTE: assuming face vertices describe facial walks! (doesn't matter for triangulations)"""
     edge2faces = defaultdict(list)
 
-    for face in tqdm(data['face']['vertex_indices'], desc="traversing faces"):
+    for face in data['face']['vertex_indices']:
         face = tuple(face)
         for i in range(len(face)):
             edge = (face[i], face[(i + 1) % len(face)])
@@ -89,7 +90,7 @@ def assertEqualGraphs(g1: nx.Graph, g2: nx.Graph):
     assert set(g1.edges) == set(g2.edges)
 
 
-def compress_ply(input_file: str):
+def compress_ply(input_file: str, max_graphlet_size=None):
     in_file = pathlib.Path(input_file)
     if not in_file.exists():
         raise FileNotFoundError(f"File {in_file} not found!")
@@ -104,7 +105,12 @@ def compress_ply(input_file: str):
         raise ValueError("Only vertex-face PLY files are supported!")
     
     wireframe = skeleton(plydata)
-    wf_comp = symm.compress_bipartite(wireframe, caching_mode=symm.CachingMode.DYNAMIC)
+    # wireframe = face_adjacency_graph(plydata)
+    if max_graphlet_size is None:
+        wf_comp = symm.compress_bipartite(wireframe, caching_mode=symm.CachingMode.DYNAMIC)
+    else:
+        wf_comp = graphlets.compress_subgraphlets(wireframe, max_graphlet_size)
+
     print(f"wireframe compressed to {wf_comp}")
     
     # copy header and vertex data from input_file to output_file
@@ -125,14 +131,19 @@ def compress_ply(input_file: str):
     graph_size = edge_path.stat().st_size
     print(f"graph size: {graph_size} bytes")
     print(f"total size: {rem_size + graph_size} bytes")
+    
     if not ignored_props:
-        print(f"compression efficiency ratio: {1 - (rem_size + graph_size) / orig_size:.3f}")
+        rel_eff = 1 - (rem_size + graph_size) / orig_size
+        print(f"compression efficiency ratio: {rel_eff:.3f}")
+        return rel_eff
+    else:
+        return None
 
 
 if __name__ == "__main__":
-    # mesh_path = r"data\MeshLab_sample_meshes\non_manif_hole.ply"
-    mesh_path = r"data\MeshLab_sample_meshes\bunny10k.ply"
-    compress_ply(mesh_path)
+    mesh_path = r"data\MeshLab_sample_meshes\non_manif_hole.ply"
+    # mesh_path = r"data\MeshLab_sample_meshes\bunny10k.ply"
+    compress_ply(mesh_path, max_graphlet_size=7)
     # S = skeleton(data)
     # print(S)
     # Sc_stat = symm.compress_bipartite(S, caching_mode=symm.CachingMode.STATIC)

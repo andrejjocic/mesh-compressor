@@ -7,6 +7,9 @@ import matplotlib.pyplot as plt
 from symmetry_compressor import *
 import network_utils as net
 import random
+import graphlets
+from pathlib import Path
+
 
 class TestCompressor(unittest.TestCase):
 
@@ -68,8 +71,34 @@ class TestCompressor(unittest.TestCase):
         Cstat = compress_bipartite(karate, caching_mode=CachingMode.STATIC)
         self.assertLessEqual(Cstat.relative_efficiency, C.relative_efficiency)
         self.assertLessEqual(0, Cstat.relative_efficiency)
-        self.assertEqualGraphs(karate, Cstat.decompress())        
+        self.assertEqualGraphs(karate, Cstat.decompress())   
 
+
+    def test_karate_atlas(self):
+        karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
+        comp = graphlets.compress_subgraphlets(karate, max_graphlet_sz=5)
+        self.assertValidEfficiency(comp.relative_efficiency)
+        karate_dec = comp.decompress()
+        self.assertEqualGraphs(karate, karate_dec)
+
+
+    def validate_serialization(self, G: nx.Graph, max_graphlet_sz=7):
+        C = graphlets.compress_subgraphlets(G, max_graphlet_sz=max_graphlet_sz)
+        self.assertValidEfficiency(C.relative_efficiency)
+        bin_path = Path("test.acgf")
+        C.serialize(bin_path)
+        C2 = graphlets.AtlasCompressedGraph.deserialize(bin_path)
+        G2 = C2.decompress()
+        self.assertEqualGraphs(G, G2)
+        bin_path.unlink()
+
+    def test_serialization_karate(self):
+        karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
+        self.validate_serialization(karate)
+
+    def test_serialization_random(self):
+        G = nx.erdos_renyi_graph(n=20, p=0.75)
+        self.validate_serialization(G, max_graphlet_sz=4)
 
     def assertValidEfficiency(self, eff: float):
         self.assertGreaterEqual(eff, 0)
