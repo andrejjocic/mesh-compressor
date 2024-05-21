@@ -127,6 +127,7 @@ class NSCompressedPartition:
     """full size of G, as number of edges"""
 
     def __init__(self, G: nx.Graph):
+        """makes a copy of G, and initializes the partition with it"""
         self.full_size = G.number_of_edges()
         self.compressed = []
         self.uncompressed = G.copy()
@@ -324,7 +325,7 @@ def compress_bipartite(G: nx.Graph, caching_mode=CachingMode.DYNAMIC) -> NSCompr
         # invalidate cache entries intersecting the removed subgraph
         if caching_mode.enabled and len(subgraph_cache) > 0:
             invalidated = 0
-            for entry in subgraph_cache: # OPT: maintin map from edges to cache entries, loop only G(U,V) edges here
+            for entry in subgraph_cache: # OPT: maintain map from edges to cache entries, loop only G(U,V) edges here
                 if edge_intersect(Guv, entry.item[0]):
                     entry.vaild = False
                     invalidated += 1
@@ -349,8 +350,6 @@ def compress_bipartite(G: nx.Graph, caching_mode=CachingMode.DYNAMIC) -> NSCompr
 def edge_intersect(G1: nx.Graph, G2: nx.Graph) -> bool:
     """check if two graphs have a non-empty edge intersection"""
     return any(e in G2.edges for e in G1.edges)
-
-
 
 
 if __name__ == "__main__":

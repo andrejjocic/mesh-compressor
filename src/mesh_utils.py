@@ -109,10 +109,11 @@ def compress_ply(input_file: str):
     
     # copy header and vertex data from input_file to output_file
     vtx_path = out_folder / f"{in_file.stem}_vertices.ply"
-    for prop in plydata["face"].properties:
-        if prop.name != "vertex_indices":
-            print(f"WARNING: ignoring property {prop.name} of face element! (compression ratio incorrect)")
-        # TODO: copy over properties of face element
+
+    ignored_props = [p.name for p in plydata["face"].properties if p.name != "vertex_indices"]
+    for propname in ignored_props:
+        # TODO: copy over properties of face element (so they can be matched to faces)
+        print(f"WARNING: ignoring property {propname} of face element! (compression ratio incorrect)")
 
     PlyData([plydata["vertex"]]).write(vtx_path)
     rem_size = vtx_path.stat().st_size
@@ -124,7 +125,8 @@ def compress_ply(input_file: str):
     graph_size = edge_path.stat().st_size
     print(f"graph size: {graph_size} bytes")
     print(f"total size: {rem_size + graph_size} bytes")
-    print(f"compression efficiency ratio: {1 - (rem_size + graph_size) / orig_size:.3f}")
+    if not ignored_props:
+        print(f"compression efficiency ratio: {1 - (rem_size + graph_size) / orig_size:.3f}")
 
 
 if __name__ == "__main__":
