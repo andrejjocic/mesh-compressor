@@ -12,7 +12,8 @@ from plyfile import PlyData, PlyElement
 import networkx as nx
 import network_utils
 import symmetry_compressor as symm
-
+import pickle
+import pathlib
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
     """Export a triangulation to a PLY file."""
@@ -42,10 +43,13 @@ end_header
     return "".join(data)
 
 
-def skeleton(data: PlyData) -> nx.Graph:
+def skeleton(data: PlyData, pbar=False) -> nx.Graph:
     """1-skeleton of the polygonal mesh."""
     G = nx.Graph(name="1-Skeleton")
-    for face in tqdm(data['face']['vertex_indices'], desc="traversing faces"):
+    faces = data['face']['vertex_indices']
+    if pbar: faces = tqdm(faces, desc="traversing faces")
+    
+    for face in faces:
         for i in range(len(face)):
             edge = (face[i], face[(i + 1) % len(face)])
             G.add_edge(*edge)
@@ -85,26 +89,57 @@ def assertEqualGraphs(g1: nx.Graph, g2: nx.Graph):
     assert set(g1.edges) == set(g2.edges)
 
 
-def compress_ply(input_file: str, output_file: str):
-    data = PlyData.read(input_file)
-    S = skeleton(data)
-    Scomp = symm.compress_bipartite(S, caching_mode=symm.CachingMode.DYNAMIC)
-    # TODO: copy header and vertex data from input_file to output_file
-    Scomp.append_to_file(output_file)
+def compress_ply(input_file: str):
+    in_file = pathlib.Path(input_file)
+    if not in_file.exists():
+        raise FileNotFoundError(f"File {in_file} not found!")
     
+    orig_size = in_file.stat().st_size
+    print(f"original size: {orig_size} bytes")
+
+    out_folder = in_file.parent / f"{in_file.stem}_NSCompressed"
+    out_folder.mkdir(exist_ok=True)
+    plydata = PlyData.read(input_file)
+    if set(el.name for el in plydata.elements) != {"vertex", "face"}:
+        raise ValueError("Only vertex-face PLY files are supported!")
+    
+    wireframe = skeleton(plydata)
+    wf_comp = symm.compress_bipartite(wireframe, caching_mode=symm.CachingMode.DYNAMIC)
+    print(f"wireframe compressed to {wf_comp}")
+    
+    # copy header and vertex data from input_file to output_file
+    vtx_path = out_folder / f"{in_file.stem}_vertices.ply"
+    for prop in plydata["face"].properties:
+        if prop.name != "vertex_indices":
+            print(f"WARNING: ignoring property {prop.name} of face element! (compression ratio incorrect)")
+        # TODO: copy over properties of face element
+
+    PlyData([plydata["vertex"]]).write(vtx_path)
+    rem_size = vtx_path.stat().st_size
+    print(f"vertices size: {rem_size} bytes")
+
+    # serialize compressed graph
+    edge_path = out_folder / f"{in_file.stem}_edges.nscp"
+    wf_comp.serialize(edge_path)
+    graph_size = edge_path.stat().st_size
+    print(f"graph size: {graph_size} bytes")
+    print(f"total size: {rem_size + graph_size} bytes")
+    print(f"compression efficiency ratio: {1 - (rem_size + graph_size) / orig_size:.3f}")
+
 
 if __name__ == "__main__":
-    data = PlyData.read(r"data\MeshLab_sample_meshes\non_manif_hole.ply")
-    S = skeleton(data)
-    print(S)
+    # mesh_path = r"data\MeshLab_sample_meshes\non_manif_hole.ply"
+    mesh_path = r"data\MeshLab_sample_meshes\bunny10k.ply"
+    compress_ply(mesh_path)
+    # S = skeleton(data)
+    # print(S)
     # Sc_stat = symm.compress_bipartite(S, caching_mode=symm.CachingMode.STATIC)
     # print(Sc_stat)
-    # assertEqualGraphs(S, Sc_stat.decompress())
+    # assertEqualGraphs(S, Sc_stat.decompr  ss())
     # print("-"*80)
-    Scomp = symm.compress_bipartite(S, caching_mode=symm.CachingMode.DYNAMIC)
-    print(Scomp)
-    # Scomp.append_to_file("test.nscomp")
-    assertEqualGraphs(S, Scomp.decompress())
+    # Scomp = symm.compress_bipartite(S, caching_mode=symm.CachingMode.DYNAMIC)
+    # print(Scomp)
+    # assertEqualGraphs(S, Scomp.decompress())
 
     # F = face_adjacency_graph(data)
     # network_utils.info(F)

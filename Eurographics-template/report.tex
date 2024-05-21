@@ -146,12 +146,14 @@ Many compression methods focus exclusively on manifold triangle meshes (or anoth
 In this paper we will consider the case of arbitrary polygonal models. Since the connectivity relations can be represented as an undirected graph, we can reduce the problem to that of graph compression.
 Specifically, we will be exploiting symmetries in the graph, which can often occur in the graphical domain.
 
+A typical mesh file format (e.g. OFF, PLY) encodes the connectivity information as a list of faces, where each face is a list of vertex indices. Within a face we have one vertex index per edge, but usually the majority of edges are shared between two faces (assuming relatively few boundary edges). This means we have about 2 vertex indices per edge, which is a baseline for storing graphs. To do any better, we must encode the connectivity with less than 2 indices per edge, meaning we need to somehow compress the graph. In this paper, we will use local symmetries in the graph to achieve this.
+
 \subsection{Related Work}
 
 % TODO: slap some survey papers in here (graph compression, mesh compression)
 
 % TODO: list connectivity comp. rates from survey table 1
-this an that paper hasdealt with symmetry-based mesh compression, but to our knowledge it has not been done with automorphisms.
+% this and that paper has dealt with symmetry-based mesh compression, but to our knowledge it has not been done with automorphisms.
 
 \section{Methods}
 
@@ -159,7 +161,7 @@ If we are willing to give up the vertex information (and infer positions with a 
 
 Čibej and Mihelič \cite{cibej2021automorphisms} have developed a method general graph compression based on automorphisms. They define
 \textit{symmetry-compressible} graphs $G$
-as ones that can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorhpism (connectivity-preserving vertex permutation) $\pi$ of $G$.
+as ones that can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorphism (connectivity-preserving vertex permutation) $\pi$ of $G$.
 Formally, $G \in \mathcal{S}\mathcal{C}$ if $\exists \pi \in Aut(G)$ such that $|G^\pi| + |\pi| < |G|$, where $|\cdot|$ denotes a measure of representation size (e.g. number of edges). 
 
 A class of graphs more amenable to practical compression are \textit{near symmetry-compressible} graphs. 

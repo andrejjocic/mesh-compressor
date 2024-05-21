@@ -1,0 +1,4 @@
+sympy
+networkx
+tqdm
+matplotlib

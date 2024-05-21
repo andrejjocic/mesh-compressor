@@ -8,6 +8,8 @@ import itertools
 import heapq
 from enum import Enum, auto
 from collections import defaultdict
+from tqdm import tqdm
+import struct
 
 Edge: TypeAlias = Tuple[int, int]
 Cycle: TypeAlias = List[int]
@@ -22,7 +24,7 @@ def eq_edges(e1: Edge, e2: Edge) -> bool:
 class VertexPermutation:
     """graph vertex permutation, in cycle notation"""
 
-    cycles: List[Cycle]
+    cycles: List[Cycle] # TODO: refactor to use sympy.combinatorics.Permutation
 
     def apply(self, v: int) -> int:
         # OPT: optimize this if needed for compression (likely won't bother benchmarking decompression)
@@ -41,6 +43,7 @@ class VertexPermutation:
         return None
     
     def apply_edge(self, e: Edge) -> Edge:
+        # The permutation can be ‘applied’ to any list-like object, not only Permutations:
         u, v = e
         # if (ui := self.cycle_index(u)) is not None and ui == self.cycle_index(v):
         #     raise Exception(f"edge {e} vertices on the same cycle")
@@ -68,7 +71,7 @@ def decompress_SC(G_residual: nx.Graph, perm: VertexPermutation) -> nx.Graph:
         i=0
         while True:
             i += 1
-            if i > 1000: raise Exception("infinite loop in decompression?")
+            if i > 1000: raise Exception("infinite loop in decompression?") # TODO: delete this
             e_perm = perm.apply_edge(e_perm)
             if eq_edges(e_perm, e):
                 break
@@ -165,7 +168,29 @@ class NSCompressedPartition:
                 file.write(f"diff {len(C.G_diff_H)}\n")
                 for u, v in C.G_diff_H:
                     file.write(f"{u} {v}\n")
-                
+
+
+    def serialize(self, filename: str) -> None:
+        # OPT: some sort of buffering
+        with open(filename, "wb") as file:
+            file.write(struct.pack("I", self.uncompressed.number_of_edges()))
+            for u, v in self.uncompressed.edges:
+                file.write(struct.pack("II", u, v))
+
+            file.write(struct.pack("I", len(self.compressed)))
+            for C in self.compressed:
+                file.write(struct.pack("I", C.H_resid.number_of_edges()))
+                for u, v in C.H_resid.edges:
+                    file.write(struct.pack("II", u, v))
+                file.write(struct.pack("I", len(C.perm.cycles)))
+                for cycle in C.perm.cycles:
+                    file.write(struct.pack("I", len(cycle)))
+                    for v in cycle:
+                        file.write(struct.pack("I", v))
+                file.write(struct.pack("I", len(C.G_diff_H)))
+                for u, v in C.G_diff_H:
+                    file.write(struct.pack("II", u, v))
+
 
 
 def rel_efficiency(g: int, u: int, v: int) -> float:
@@ -218,7 +243,7 @@ def extract_bipart(G: nx.Graph, v0: int) -> Tuple[float, nx.Graph, Set[Edge], Se
             greedy_optimize(U, V)
         if len(V) > 2:
             greedy_optimize(V, U)
-                
+    
     return max_eff, Guv, U, V
 
 
@@ -242,27 +267,34 @@ class CachingMode(Enum):
     DYNAMIC = auto()
     """cache subgraphs at the start, then recompute optimal subgraphs from affected vertices after each compression"""
 
+    @property
+    def enabled(self) -> bool:
+        return self != CachingMode.NONE
 
-def compress_bipartite(G: nx.Graph, caching_mode=CachingMode.NONE) -> NSCompressedPartition:
+
+def compress_bipartite(G: nx.Graph, caching_mode=CachingMode.DYNAMIC) -> NSCompressedPartition:
     # [ČM21] algorithm 2
     Gcomp = NSCompressedPartition(G) # OPT: modify G in place (for proper benchmarking)
     subgraph_stats = defaultdict(list)
 
-    if caching_mode != CachingMode.NONE:
+    if caching_mode.enabled:
         subgraph_cache: List[PrioritizedItem] = []
         for effic, Guv, U, V in (extract_bipart(Gcomp.uncompressed, v) for v in G.nodes):
             if effic > 0: # don't bother caching subgraphs that won't be selected
-                heapq.heappush(subgraph_cache, PrioritizedItem(priority=-effic, item=(Guv, U, V))) # sort by efficiency (descending)
+                subgraph_cache.append(PrioritizedItem(priority=-effic, item=(Guv, U, V))) # sort by efficiency (descending)
 
         heapq.heapify(subgraph_cache)
+        # NOTE: with static caching we only need a pre-sorted list (not heap), but asymptotic complexity is nlgn in any case
+        pbar = tqdm(total=len(subgraph_cache), desc="processing subgraphs")
 
-    while True: # TODO: progress bar showing size of queue
+    while True:
         if caching_mode == CachingMode.NONE:
             effic, Guv, U, V = max((extract_bipart(Gcomp.uncompressed, v) for v in G.nodes), key=lambda res: res[0])
             if effic <= 0: break
         else:
             try:
                 best = heapq.heappop(subgraph_cache)
+                pbar.update(1)
                 if not best.vaild: continue
 
                 Guv, U, V = best.item
@@ -285,13 +317,12 @@ def compress_bipartite(G: nx.Graph, caching_mode=CachingMode.NONE) -> NSCompress
             G_diff_H=[(u, v) for u in U for v in V if not Guv.has_edge(u, v)] 
         )
         if len(Guv_comp.G_diff_H) > 0: print(f"completing to K(U,V) with {Guv_comp.G_diff_H}")
-
-        assert Guv_comp.relative_efficiency(Guv.number_of_edges()) == effic
+        # assert Guv_comp.relative_efficiency(Guv.number_of_edges()) == effic
         Gcomp.compressed.append(Guv_comp)
         subgraph_stats[tuple(sorted([len(U), len(V)]))].append(effic)
 
         # invalidate cache entries intersecting the removed subgraph
-        if caching_mode != CachingMode.NONE and len(subgraph_cache) > 0:
+        if caching_mode.enabled and len(subgraph_cache) > 0:
             invalidated = 0
             for entry in subgraph_cache: # OPT: maintin map from edges to cache entries, loop only G(U,V) edges here
                 if edge_intersect(Guv, entry.item[0]):
@@ -307,9 +338,11 @@ def compress_bipartite(G: nx.Graph, caching_mode=CachingMode.NONE) -> NSCompress
                     if Gcomp.uncompressed.degree[x] == 0: assert effic == 0
                     if effic > 0:
                         heapq.heappush(subgraph_cache, PrioritizedItem(priority=-effic, item=(Guv, U, V)))
+                        pbar.total += 1
 
+    if caching_mode.enabled: pbar.close()
     for uv, effs in subgraph_stats.items():
-        print(f"extracted {len(effs)}x K{uv}, avg eff = {sum(effs) / len(effs):.3f}, max eff = {max(effs):.3f}")
+        print(f"extracted {len(effs)}x G{uv}, avg eff = {sum(effs) / len(effs):.3f}, max eff = {max(effs):.3f}")
     return Gcomp
 
 
@@ -318,14 +351,17 @@ def edge_intersect(G1: nx.Graph, G2: nx.Graph) -> bool:
     return any(e in G2.edges for e in G1.edges)
 
 
+
+
 if __name__ == "__main__":
     # graph = nx.gnp_random_graph(n=30, p=0.5)
-    graph = net.read_pajek("karate_club", data_folder="data\\networks")
-    print(graph)
-    for caching_mode in CachingMode:
-        print(f"compressing with caching mode {caching_mode}")
+    # graph = net.read_pajek("karate_club", data_folder="data\\networks")
+    graph = nx.erdos_renyi_graph(n=50, p=0.9)
+    # print(graph)
+    for caching_mode in [CachingMode.STATIC, CachingMode.DYNAMIC]:
+        # print(f"compressing with caching mode {caching_mode}")
         C = compress_bipartite(graph, caching_mode)
-        print(C)
-        print("decompressing...")
-        print(C.decompress())
-        print()
+        # print(C)
+        # print("decompressing...")
+        # print(C.decompress())
+        # print()
