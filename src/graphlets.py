@@ -59,7 +59,7 @@ def cache_atlas_efficiency(cache_dir="cache"):
             n2graphlets[n].append(AtlasGraphlet(atlas_idx, rel_eff))
         elif m > 0:
             assert 1 - (1 + n) / (2 * m) <= 0
-
+     # OPT: since altlas is (secondarily) sorted by m, we can break early (skip to next n)
 
     cache_dir = Path(cache_dir)
     if not cache_dir.exists():
@@ -117,7 +117,9 @@ class AtlasCompressedGraph:
         assert self.atlas[graphlet.index].number_of_nodes() == len(mapped_nodes)
 
         self.residual.remove_edges_from(subgraph.edges)
-        self.compressed_graphlets.append((graphlet, mapped_nodes)) # TODO: try the other encoding if graphlets often reoccur
+        self.compressed_graphlets.append((graphlet, mapped_nodes))
+        # TODO: try the other encoding if graphlets often reoccur
+        # (we can easily afford extra byte for a switch flag, so decide based on efficiency)
 
     def decompress(self, in_place=True) -> nx.Graph:
         graphlet_atlas = nx.graph_atlas_g() if self.atlas is None else self.atlas
@@ -183,7 +185,6 @@ class AtlasCompressedGraph:
                 ))
 
         return acg
-
         
 
 
