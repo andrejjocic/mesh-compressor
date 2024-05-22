@@ -5,7 +5,7 @@ from pathlib import Path
 from symmetry_compressor import eq_edges
 from tqdm import tqdm
 from typing import *
-from collections import defaultdict
+from collections import defaultdict, Counter
 import networkx.algorithms.isomorphism as iso
 import json
 import network_utils as net
@@ -28,7 +28,7 @@ class AtlasGraphlet:
     """index in the graph atlas"""
     efficiency: float
     """compression efficiency of the graphlet"""
-    # TODO: just add the atlas as an attribute?
+    # just add the atlas as an attribute?
 
     def expand(self, node_mapping: List[int], atlas: List[nx.Graph]) -> nx.Graph:
         """expand the graphlet to a full graph
@@ -157,6 +157,7 @@ class AtlasCompressedGraph:
                     f.write(struct.pack("<I", node))
 
 
+
     @staticmethod
     def deserialize(filename: str) -> "AtlasCompressedGraph":
         filename = Path(filename)
@@ -195,11 +196,11 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
 
     graphlet_atlas = nx.graph_atlas_g()
     Gcomp = AtlasCompressedGraph(G, take_ownership=False, atlas=graphlet_atlas)
-    graphlets = load_atlas_efficiency(n_max=max_graphlet_sz)
-    if sort_by_efficiency: # OPT: just have the cache sorted by efficiency
-        graphlets.sort(key=lambda g: g.efficiency, reverse=True)
+    graphlets = load_atlas_efficiency(n_max=max_graphlet_sz) # TODO: option to halt at certain efficiency threshold
+    if sort_by_efficiency: 
+        graphlets.sort(key=lambda g: g.efficiency, reverse=True) # OPT: just have the cache sorted by efficiency
 
-    graphlet_stats = defaultdict(int)
+    graphlet_stats = Counter()
 
     for graphlet_id in tqdm(graphlets, desc="looping over graphlets", ncols=100):
         graphlet = graphlet_atlas[graphlet_id.index]
@@ -210,6 +211,7 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
             inv_iso = {v: k for k, v in isomorphism.items()}
             subgraph = nx.relabel_nodes(graphlet, mapping=inv_iso, copy=True)
             if any(not Gcomp.residual.has_edge(*edge) for edge in subgraph.edges):
+                # print(f"skipping instance of graphlet {graphlet_id.index} (not edge-disjoint)")
                 continue # a part of this subgraph has already been compressed (with the same graphlet)
             
             mapped_nodes = [inv_iso[i] for i in range(subgraph.number_of_nodes())]
@@ -217,9 +219,9 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
             graphlet_stats[graphlet_id.index] += 1
 
     if print_stats:
-        print("Graphlet statistics:")
-        for graphlet_idx, count in graphlet_stats.items():
-            print(f"graphlet {graphlet_idx}: {count} occurrences")
+        print("Graphlet stats (#occurences of <index>):")
+        for idx, count in sorted(graphlet_stats.items(), key=lambda x: x[1], reverse=True):
+            print(f"{count}x {idx}")
 
     return Gcomp
 

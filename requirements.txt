@@ -2,3 +2,5 @@ sympy
 networkx
 tqdm
 matplotlib
+plyfile
+numpy
