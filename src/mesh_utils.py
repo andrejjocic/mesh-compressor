@@ -15,6 +15,7 @@ from pathlib import Path
 import graphlets
 import argparse
 import re
+import orientable
 
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
@@ -165,7 +166,12 @@ def cycles(graph: nx.Graph, length: int) -> Iterator[List[int]]:
         if len(cycle) == length:
             yield cycle    
 
-def decompress_ply(folder: str, pbar=True, **kwargs) -> PlyData:
+def decompress_ply(folder: str, pbar=True, set_orientation=True) -> PlyData:
+    """Decompress a PLY file's connectivity data using graphlet atlas compression.
+    ### Parameters:
+    - folder: path to the folder containing the compressed data
+    - pbar: show progress bar
+    - set_orientation: orient the faces of the decompressed mesh (if they form an orientable 2-manifold)"""
     folder: Path = Path(folder)
     if not folder.exists():
         raise FileNotFoundError(f"Folder {folder} not found!")
@@ -193,6 +199,18 @@ def decompress_ply(folder: str, pbar=True, **kwargs) -> PlyData:
         faces = tqdm(faces, total=f, desc="generating faces")
 
     faces = list(faces)
+
+    if set_orientation and face_degree != 3:
+        print(f"WARNING: face orientation not supported for face degree {face_degree}")
+    if set_orientation and face_degree == 3: # TODO: support other face degrees
+        try:
+            if (ori_faces := orientable.orientable([tuple(face) for face in faces])) is not None:
+                faces = ori_faces # NOTE: should we convert tuples back to lists?
+            else:
+                print("Warning: mesh is not orientable, face orientation not set!")
+        except Exception as e:
+            print(f"Error setting face orientation: {e}")
+
     # face_data = np.array([np.array(f) for f in faces], dtype=("vertex_indices", "u4", (face_degree,)))
     face_data = np.array([(f,) for f in faces],
                          dtype=[('vertex_indices', 'u4', (face_degree,))])
@@ -217,9 +235,10 @@ if __name__ == "__main__":
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
     unzip_parser.add_argument("folder", type=str, help="Path to the folder containing the compressed data.")
+    unzip_parser.add_argument("--no_orientation", action="store_false", help="Don't set face orientation.")
     
     args = parser.parse_args()
     if args.command == "zip":    
         compress_ply(args.input_file, max_graphlet_sz=args.max_graphlet, verbose=args.verbose, print_stats=args.verbose)
     elif args.command == "unzip":
-        decompress_ply(args.folder)
+        decompress_ply(args.folder, set_orientation=args.no_orientation)

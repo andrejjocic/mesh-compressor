@@ -205,7 +205,7 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
     for graphlet_id in tqdm(graphlets, desc="looping over graphlets", ncols=100):
         graphlet = graphlet_atlas[graphlet_id.index]
         matcher = iso.GraphMatcher(Gcomp.residual, G2=graphlet, node_match=None, edge_match=None) # node and edge attributes are ignored
-        # TODO: find find a *maximal* set of edge-disjoint isomorphic subgraphs
+
         for isomorphism in matcher.subgraph_isomorphisms_iter():
             # for subgraph on {0,1,2,3}, an isomorphism looks something like {4: 0, 13: 1, 2: 2, 44: 3}
             inv_iso = {v: k for k, v in isomorphism.items()}
