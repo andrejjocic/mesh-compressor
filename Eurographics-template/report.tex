@@ -144,18 +144,25 @@ The information we usually store is the model's geometry (positions of vertices)
 Typically the connectivity information takes up the most space (around twice as much as the goemetry information in a triangle mesh homeomorphic to a sphere \cite{rossignac1999edgebreaker}), so it is the most important to compress.
 Many compression methods focus exclusively on manifold triangle meshes (or another constrained structure) to get the best possible results.  
 In this paper we will consider the case of arbitrary polygonal models. Since the connectivity relations can be represented as an undirected graph, we can reduce the problem to that of graph compression.
+One issue with this approach is that we lose face orientation data, which renderers need for shading and face culling. If a renderer can't infer consistent face orientations from just the wireframe, we will need to encode this information separately. This is briefly discussed in section TODO.
+
 Specifically, we will be exploiting symmetries in the graph, which can often occur in the graphical domain.
+
+\section{Mesh File Formats}
 
 A typical mesh file format (e.g. OFF, PLY) encodes the connectivity information as a list of faces, where each face is a list of vertex indices. Within a face we have one vertex index per edge, but usually the majority of edges are shared between two faces (assuming relatively few boundary edges). This means we have about 2 vertex indices per edge, which is a baseline for storing graphs. To do any better, we must encode the connectivity with less than 2 indices per edge, meaning we need to somehow compress the graph. In this paper, we will use local symmetries in the graph to achieve this.
 
-\subsection{Related Work}
+We decided to support compression and decompression of PLY files, since they are widely adopted and relatively simple in terms of structure.
+Note that PLY has two formats: compact binary and human-readable ASCII. When reporting compression rates, we will be considering the binary format for a fair comparison with our (binary) compressed files.
+
+% \subsection{Related Work}
 
 % TODO: slap some survey papers in here (graph compression, mesh compression)
 
 % TODO: list connectivity comp. rates from survey table 1
 % this and that paper has dealt with symmetry-based mesh compression, but to our knowledge it has not been done with automorphisms.
 
-\section{Methods}
+\section{Symmetry Compression}
 
 If we are willing to give up the vertex information (and infer positions with a layout algorithm), we can just compress the connectivity information. In this case compressing the face incidence graph is a viable option, since we don't have to list the vertices of each face but just an arbitrary identifier. Then we can get the 1-skeleton of the model by computing the dual of the decompressed face incidence graph.
 
@@ -179,23 +186,33 @@ Though a star graph is a common occurence in the graphical domain, it is unfortu
 
 Note that the only complete bipartite graphs that are planar are $K_{1,n}$ (a star) and $K_{2,n}$, but the former is not symmetry-compressible. (Wagner's theorem)
 
+The 1-skeletons of manifold meshes (which the vast majority of real-world models are) are planar graphs. So the face adjacency graph, which is the dual of the 1-skeleton, is also planar. This means these graphs are very sparse with $m = O(n)$, where $n$ is the number of vertices and $m$ is the number of edges. This easily explains the poor performance of the bipartite completion method, since many edges have to be added to make a complete bipartite subgraph.  
+
+
 \subsection{Graphlet Search}
-This one is a lot slower, but may be more appropriate for our case (if we're not compressing on the fly during transmission).
+% This one is a lot slower, but may be more appropriate for our case (if we're not compressing on the fly during transmission).
+Another approach they present is to search for symmetry-compressible subgraphs. Going through all graphlets up to a certain size (in decreasing order of relative compression efficiency). Then a maximal edge-disjoint set of SC subgraphs is greedily selected to be replaced by their CS representations. We have opted to modify this approach with the help of a \textit{graph atlas} \cite{read1998atlas}, a systematic enumrations of all undirected graphs up to a cerain length. Python's networkx library, which we have chosen for most of our graph data processing, provides access to the 1253 graphlets with $n \leq 7$.
+Instead of $(\pi, H^\pi)$ we simply store $H$'s atlas index and a mapping between nodes of $G$ and $H$.
+It makes sense in this case because we are only looking for small subgraphs.
+Any more than that acn result in unreasonable compression times anyway.
+This may be seen as a dictionary-based graph encoding. Since this takes only $1 + n$ integers to store, it is always at least as efficient as the CS representation since an encoding of $\pi$ requires at least $n$ integers.
 
 \subsection{Compressed file format}
 Most commonly used file formats for storing 3D models have the following structure: a header with metadata, then the vertex data, and finally the connectivity data. Connectivity data is usually stored as a list of faces, where each face is a list of vertex indices. This means the graph we will be compressing is the 1-skeleton of the model. Alternatively we could compress the face adjacency graph, but this would just inflate such an input file.
 
 When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
 
+\section{Decompresion}
+
+note that enumerating faces can take quite a while. for triangle mesh, complexity is TODO % see nx documentation notes
+
 \section{Results}
 
 
 \section{Discussion}
 
-The 1-skeletons of manifold meshes (which the vast majority of real-world models are) are planar graphs. So the face adjacency graph, which is the dual of the 1-skeleton, is also planar. This means these graphs are very sparse with $m = O(n)$, where $n$ is the number of vertices and $m$ is the number of edges. This easily explains the poor performance of the bipartite completion method, since many edges have to be added to make a complete bipartite subgraph.  
 
-
-\section{Future Work}
+\subsection{Future Work}
 \begin{itemize}
         \item bit-efficient encoding (instead of pickle dump)
         \item graphlet heuristic sort with eg. orbit counting stats

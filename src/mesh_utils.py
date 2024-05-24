@@ -15,7 +15,7 @@ from pathlib import Path
 import graphlets
 import argparse
 import re
-import orientable
+from orientable import orient, Vertex, Edge, Triangle, Simplex, SimplexMap
 
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
@@ -166,7 +166,40 @@ def cycles(graph: nx.Graph, length: int) -> Iterator[List[int]]:
         if len(cycle) == length:
             yield cycle    
 
-def decompress_ply(folder: str, pbar=True, set_orientation=True) -> PlyData:
+
+def surface_faces(cycles: List[List[int]]) -> List[List[int]]:
+    """Filter out all the cycles inside the surface (ones with all edges incident on more than 2 faces)."""
+    faces_on_edge = SimplexMap(key_dimension=1, map_constructor=lambda: defaultdict(list))
+    for cycle in cycles:
+        for edge in zip(cycle, cycle[1:] + cycle[:1]):
+            faces_on_edge[edge].append(cycle)
+
+    surface = []
+    boundary_size = 0
+
+    for cycle in cycles:
+        edges = list(zip(cycle, cycle[1:] + cycle[:1]))
+        nonmanifold_edges = list(filter(lambda e: len(faces_on_edge[e]) > 2, edges))
+        boundary_edges = list(filter(lambda e: len(faces_on_edge[e]) == 1, edges))
+        boundary_size += len(boundary_edges)
+        internal_edges = len(cycle) - len(boundary_edges)
+
+        if len(boundary_edges) == len(edges):
+            print(f"WARNING: face {cycle} is isolated")
+
+        if (n_nonmf := len(nonmanifold_edges)) != internal_edges:
+            surface.append(cycle)
+        # if 1 <= n_nonmf < internal_edges, this just means the face is *touching* an invalid face
+        if n_nonmf > internal_edges:
+            # this case impossible if we computed the SimplexMap correctly (?)
+            print(f"WARNING: face {cycle} has {internal_edges} internal and {n_nonmf} non-manifold edges")
+
+    print(f"removed {len(cycles) - len(surface)} interior faces")
+    print(f"found {boundary_size} boundary edges")
+    return surface            
+    
+
+def decompress_ply(folder: str, out_name: str, pbar=True, set_orientation=True, flip_faces=False) -> PlyData:
     """Decompress a PLY file's connectivity data using graphlet atlas compression.
     ### Parameters:
     - folder: path to the folder containing the compressed data
@@ -193,32 +226,31 @@ def decompress_ply(folder: str, pbar=True, set_orientation=True) -> PlyData:
         face_degree = 3
         print(f"WARNING: face degree not found in filename {edge_path.stem}, assuming triangular faces")
 
-    faces = cycles(wireframe, length=face_degree)
+    all_cycles = cycles(wireframe, length=face_degree)
     if pbar:
         f = len(wireframe.edges) - len(wireframe.nodes) + 2 # good estimate assuming (roughly) planar graph
-        faces = tqdm(faces, total=f, desc="generating faces")
+        all_cycles = tqdm(all_cycles, total=f, desc="generating faces")
 
-    faces = list(faces)
+    faces = surface_faces(list(all_cycles))
 
     if set_orientation and face_degree != 3:
         print(f"WARNING: face orientation not supported for face degree {face_degree}")
     if set_orientation and face_degree == 3: # TODO: support other face degrees
         try:
-            if (ori_faces := orientable.orientable([tuple(face) for face in faces])) is not None:
-                faces = ori_faces # NOTE: should we convert tuples back to lists?
+            ori_faces = orient([tuple(face) for face in faces], reverse_first=flip_faces)
+            if ori_faces is not None:
+                faces = [list(f) for f in ori_faces] # can we just keep them as tuples?
             else:
                 print("Warning: mesh is not orientable, face orientation not set!")
         except Exception as e:
             print(f"Error setting face orientation: {e}")
 
     # face_data = np.array([np.array(f) for f in faces], dtype=("vertex_indices", "u4", (face_degree,)))
-    face_data = np.array([(f,) for f in faces],
-                         dtype=[('vertex_indices', 'u4', (face_degree,))])
+    face_data = np.array([(f,) for f in faces], dtype=[('vertex_indices', 'u4', (face_degree,))])
     # NOTE: is this the correct type? (serialization uses 4-byte unsigned int)
     plydata.elements = [plydata["vertex"], PlyElement.describe(face_data, "face")]
 
-    out_file = folder / f"decompressed.ply"
-    plydata.write(out_file)
+    plydata.write(out_file := folder / f"{out_name}.ply")
     print(f"Decompressed mesh saved to {out_file}")
     return plydata
 
@@ -235,10 +267,13 @@ if __name__ == "__main__":
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
     unzip_parser.add_argument("folder", type=str, help="Path to the folder containing the compressed data.")
+    unzip_parser.add_argument("--output_file", type=str, default="decompressed  ", help="Name of the output PLY file.")
     unzip_parser.add_argument("--no_orientation", action="store_false", help="Don't set face orientation.")
+    unzip_parser.add_argument("--flip_orientation", action="store_true",
+                              help="Flip the orientation of all faces, w.r.t. the (arbitrary) default orientation.")
     
     args = parser.parse_args()
     if args.command == "zip":    
         compress_ply(args.input_file, max_graphlet_sz=args.max_graphlet, verbose=args.verbose, print_stats=args.verbose)
     elif args.command == "unzip":
-        decompress_ply(args.folder, set_orientation=args.no_orientation)
+        decompress_ply(args.folder, out_name=args.output_file, set_orientation=args.no_orientation, flip_faces=args.flip_orientation)

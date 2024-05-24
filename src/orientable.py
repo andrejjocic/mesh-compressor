@@ -44,7 +44,7 @@ class SimplexMap[V]:
 
 def orientableQ(T: List[Triangle]) -> bool:
     """T: triangulation of a 2-manifold"""
-    return orientable(T) is not None
+    return orient(T) is not None
 
 
 def edges(triangle: Triangle) -> Iterator[Edge]:
@@ -77,14 +77,19 @@ def neighbor_map(triangulation: List[Triangle], combinatorial_surface=True) -> S
     return neighbors_of
 
 
-def orientable(T: List[Triangle]) -> Optional[List[Triangle]]:
-    """T: triangulation of a 2-manifold (locally plane-like, optional boundary)
-    Returns: None if T is not orientable, otherwise a list of oriented triangles"""
-
+def orient(T: List[Triangle], reverse_first=False) -> Optional[List[Triangle]]:
+    """Orient the faces of a triangulation (if possible)
+    ### Args:
+    - T: triangulation of a 2-manifold (locally plane-like, optional boundary)
+    - reverse_first: if True, reverse the orientation of the first triangle before fixing the rest
+    ### Returns:
+    None if T is not orientable, otherwise a list of oriented triangles
+    """
     neighbors_of = neighbor_map(T)
     triang_orientation: SimplexMap[Triangle] = SimplexMap(2)
 
-    triang_orientation[first] = (first := T[0]) # orient the first triangle arbitrarily
+    first = T[0]
+    triang_orientation[first] = first[::-1] if reverse_first else first # arbitrary orientation, defines the rest
     orientation_queue = list(neighbors_of[first])
     
     while orientation_queue: # NOTE: BFS faster at finding a contradiction?

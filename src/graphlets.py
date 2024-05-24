@@ -60,6 +60,7 @@ def cache_atlas_efficiency(cache_dir="cache"):
         elif m > 0:
             assert 1 - (1 + n) / (2 * m) <= 0
      # OPT: since altlas is (secondarily) sorted by m, we can break early (skip to next n)
+     # (see oeis.org/A001349)
 
     cache_dir = Path(cache_dir)
     if not cache_dir.exists():
