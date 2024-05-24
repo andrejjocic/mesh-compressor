@@ -145,6 +145,7 @@ Typically the connectivity information takes up the most space (around twice as 
 Many compression methods focus exclusively on manifold triangle meshes (or another constrained structure) to get the best possible results.  
 In this paper we will consider the case of arbitrary polygonal models. Since the connectivity relations can be represented as an undirected graph, we can reduce the problem to that of graph compression.
 One issue with this approach is that we lose face orientation data, which renderers need for shading and face culling. If a renderer can't infer consistent face orientations from just the wireframe, we will need to encode this information separately. This is briefly discussed in section TODO.
+Another small issue is that we can't preserve single-face holes (see TODO), since these can't possibly be inferred from the wireframe alone.
 
 Specifically, we will be exploiting symmetries in the graph, which can often occur in the graphical domain.
 
@@ -152,64 +153,89 @@ Specifically, we will be exploiting symmetries in the graph, which can often occ
 
 A typical mesh file format (e.g. OFF, PLY) encodes the connectivity information as a list of faces, where each face is a list of vertex indices. Within a face we have one vertex index per edge, but usually the majority of edges are shared between two faces (assuming relatively few boundary edges). This means we have about 2 vertex indices per edge, which is a baseline for storing graphs. To do any better, we must encode the connectivity with less than 2 indices per edge, meaning we need to somehow compress the graph. In this paper, we will use local symmetries in the graph to achieve this.
 
+Most commonly used file formats for storing 3D models have the following structure: a header with metadata, then the vertex data, and finally the connectivity data. Connectivity data is usually stored as a list of faces, where each face is a list of vertex indices. This means the graph we will be compressing is the 1-skeleton of the model. Alternatively we could compress the face adjacency graph, but this would just inflate such an input file.
+
 We decided to support compression and decompression of PLY files, since they are widely adopted and relatively simple in terms of structure.
 Note that PLY has two formats: compact binary and human-readable ASCII. When reporting compression rates, we will be considering the binary format for a fair comparison with our (binary) compressed files.
 
-% \subsection{Related Work}
-
-% TODO: slap some survey papers in here (graph compression, mesh compression)
-
-% TODO: list connectivity comp. rates from survey table 1
-% this and that paper has dealt with symmetry-based mesh compression, but to our knowledge it has not been done with automorphisms.
-
-\section{Symmetry Compression}
-
 If we are willing to give up the vertex information (and infer positions with a layout algorithm), we can just compress the connectivity information. In this case compressing the face incidence graph is a viable option, since we don't have to list the vertices of each face but just an arbitrary identifier. Then we can get the 1-skeleton of the model by computing the dual of the decompressed face incidence graph.
 
-Čibej and Mihelič \cite{cibej2021automorphisms} have developed a method general graph compression based on automorphisms. They define
-\textit{symmetry-compressible} graphs $G$
-as ones that can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorphism (connectivity-preserving vertex permutation) $\pi$ of $G$.
-Formally, $G \in \mathcal{S}\mathcal{C}$ if $\exists \pi \in Aut(G)$ such that $|G^\pi| + |\pi| < |G|$, where $|\cdot|$ denotes a measure of representation size (e.g. number of edges). 
+% \subsection{Related Work}
+% slap some survey papers in here (graph compression, mesh compression)
+% this and that paper has dealt with symmetry-based mesh compression, but to our knowledge it has not been done with automorphisms.
 
-A class of graphs more amenable to practical compression are \textit{near symmetry-compressible} graphs. 
-% TODO: define near symmetry-compressible graphs
+\section{Symmetry Compression} % FIXME: better name (or move your stuff to section "atlas c)
 
+Čibej and Mihelič \cite{cibej2021automorphisms} have developed a general graph compression method based on automorphisms (connectivity-preserving vertex permutations).
+A graph $G$ is defined to be \textit{symmetry-compressible} (SC)
+if it can be more succinctly represented with a ``residual'' graph $G^\pi$ and an automorphism  $\pi$ of $G$. Here $G^\pi$ is the minimal set of edges required to reconstruct $G$ by applying $\pi$ to its edges until all cycles of the permutation are closed.
+Formally, $G \in \mathcal{S}\mathcal{C}$ if $\exists \pi \in Aut(G)$ such that $|G^\pi| + |\pi| < |G|$, where $Aut(G)$ is the group of $G$'s automorphisms and $|\cdot|$ denotes a measure of representation size (e.g. number of edges). 
 
-The main computational issue is finding a (compressive) automorphism. The paper presents two approaches: graphlet search and bipartite completion.
-As Theorem TODO shows, we can just search for SC subgraphs.
+The relative efficiency of a symmetry-compressed representation is defined as
+$\Delta^r(\pi, G) = \frac{|G| - |\pi| - |G^\pi|}{|G|}$.
+% Note that for $G \in \mathcal{S}\mathcal{C}$, $\varDelta^r(\pi, G) \in (0, 1)$ and higher values indicate better compression.\varDelta 
 
-\subsection{Bipartite Completion}
+% TODO: move NSC discussion to the next section
+A class of graphs more amenable to practical compression are \textit{near symmetry-compressible} (NSC) graphs. These are ones that can be turned into SC graphs by adding and/or removing a relatively small number of edges.
+Formally, $G \in \mathcal{N}\mathcal{S}\mathcal{C}$ if $\exists H, \pi \in Aut(H)$ such that $|H^\pi| + |\pi| + |H \oplus G| < |G|$. Note that $\mathcal{S}\mathcal{C} \subset \mathcal{N}\mathcal{S}\mathcal{C}$.
 
-Though in principle we could use a single structure instead of a list, this may result in a non-disjoint set of cycles for the permutation. We could get around this by considering all options at decompression??
+We can define the relative compression efficiency for a NSC graph similarly to the SC case.
 
-Though a star graph is a common occurence in the graphical domain, it is unfortunately not symmetry-compressible (measuring size by number of edges) (??) do we only need NSC?
+The main computational issue in compressing a graph is finding a (compressive) automorphism $\pi$,
+and optionally an edge difference $H \oplus G$ that makes finding $\pi$ easier.
 
-Note that the only complete bipartite graphs that are planar are $K_{1,n}$ (a star) and $K_{2,n}$, but the former is not symmetry-compressible. (Wagner's theorem)
+The problem is made somewhat easier by the fact that we only need to look for NSC subgraphs. If we replace the subgraph's edges with their NSC representation, we have reduced the representation size of the whole graph. Indeed, if $H \subseteq G$ and $H \in \mathcal{N}\mathcal{S}\mathcal{C}$, then $G \in \mathcal{N}\mathcal{S}\mathcal{C}$.
 
-The 1-skeletons of manifold meshes (which the vast majority of real-world models are) are planar graphs. So the face adjacency graph, which is the dual of the 1-skeleton, is also planar. This means these graphs are very sparse with $m = O(n)$, where $n$ is the number of vertices and $m$ is the number of edges. This easily explains the poor performance of the bipartite completion method, since many edges have to be added to make a complete bipartite subgraph.  
+Unfortunately the most common structure found in polygonal meshes, a triangle, is not SC \cite[Theorem 3]{cibej2021automorphisms}. But we may still find some luck with larger subgraphs.
 
+The paper presents two approaches: graphlet search and bipartite completion.
 
 \subsection{Graphlet Search}
 % This one is a lot slower, but may be more appropriate for our case (if we're not compressing on the fly during transmission).
-Another approach they present is to search for symmetry-compressible subgraphs. Going through all graphlets up to a certain size (in decreasing order of relative compression efficiency). Then a maximal edge-disjoint set of SC subgraphs is greedily selected to be replaced by their CS representations. We have opted to modify this approach with the help of a \textit{graph atlas} \cite{read1998atlas}, a systematic enumrations of all undirected graphs up to a cerain length. Python's networkx library, which we have chosen for most of our graph data processing, provides access to the 1253 graphlets with $n \leq 7$.
+Another approach they present is to search for symmetry-compressible subgraphs. Going through all graphlets up to a certain size (in decreasing order of relative compression efficiency). Then a maximal edge-disjoint set of SC subgraphs is greedily selected to be replaced by their CS representations.
+
+We have opted to modify this approach with the help of a \textit{graph atlas} \cite{read1998atlas}, a systematic enumrations of all undirected graphs up to a cerain length. Python's networkx library, which we have chosen for most of our graph data processing, provides access to the 1253 graphlets with $n \leq 7$.
 Instead of $(\pi, H^\pi)$ we simply store $H$'s atlas index and a mapping between nodes of $G$ and $H$.
 It makes sense in this case because we are only looking for small subgraphs.
 Any more than that acn result in unreasonable compression times anyway.
 This may be seen as a dictionary-based graph encoding. Since this takes only $1 + n$ integers to store, it is always at least as efficient as the CS representation since an encoding of $\pi$ requires at least $n$ integers.
 
-\subsection{Compressed file format}
-Most commonly used file formats for storing 3D models have the following structure: a header with metadata, then the vertex data, and finally the connectivity data. Connectivity data is usually stored as a list of faces, where each face is a list of vertex indices. This means the graph we will be compressing is the 1-skeleton of the model. Alternatively we could compress the face adjacency graph, but this would just inflate such an input file.
+This may be seen as a sort of \textit{instancing} on a sub-mesh level. Instancing is a common technique for reducing the description size of a scene with many repeated objects (e.g. foliage elements) where we only store one copy of the object's geometry and associate each instance with its own coordinate transformation. In our case, we're ``storing'' one copy of a graphlet in the atlas and associating each instance with a vertex mapping, analogous to a coordinate transformation.
 
-When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
+\subsection{Compressed file format}
+
+
+\section{Near-Symmetry Compression}
+
+\subsection{Bipartite Completion}
+
+This is the first one we experimented with, because of superior running time.
+The idea is to repeatedly find near-complete bipartite subgraphs (which have high relative efficiency) and replace them with their compressed representation. These are found by a greedy optimization starting from each vertex.
+
+To cache the subgraphs we used a priority queue, sorted by relative efficiency. When extracting a sugraph $G(U,V)$, we must invalidate all cache entries that share an edge with it. 
+We implemented two caching modes: static and dynamic. In the static mode, we only invalidate cache entries. In the dynamic mode, we also recompute locally optimal bipartite subgraphs from each $x \in U \cup V$. We don't even have to check if they are better than the cached ones, since the cache is already sorted by relative efficiency and the better ones will be extracted first (invalidating the worse ones).
+
+Even the dynamic caching mode (which runs significantly slower) yielded very poor relative efficiency (around 0.1 - 0.15 for the meshes we tested), so we did not pursue this avenue further.
+
+These results may be explained by the fact that typical polygonal meshes planar or locally plane-like (they have euler characteristic close to 2). A complete bipartite graph $K_{n,m}$ with $n \geq 3$ and $m \geq 3$ contains $K_{3,3}$ as a subgraph, so it isn't planar by Wagner's theorem. Thus the only complete bipartite graphs that may often appear in the graphical domain are $K_{1,n}$ (a star) and $K_{2,n}$, but the former%, which may occur with high $n$ in highly tesselated meshes,
+is not symmetry-compressible \cite[Theorem 2]{cibej2021automorphisms}. Indeed, $K_{1,n}$ is not even NSC (by \cite[Theorem 6]{cibej2021automorphisms}).
+The vast majority of extracted subgraphs we observed for meshes was $K_{2,2}$, which does not have a very good relative efficiency $\Delta^r(K_{2,2}) = \frac{1}{8}$ (note this value falls in the above-reported range of efficiencies).
+
+Of course we could theoretically also find a symmetric difference $G(U,V) \oplus K(U,V)$ to compress an incomplete bipartite subgraph $G(U,V)$, but since (near-)planar graphs are very sparse with $m = O(n)$, this results in too large a $|G(U,V) \oplus K(U,V)|$ for the representation to be compressive. % TODO: prove this is always the case for planar graphs?
+
+
 
 \section{Decompresion}
 
+When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
+
 note that enumerating faces can take quite a while. for triangle mesh, complexity is TODO % see nx documentation notes
 
-\section{Results}
+\section{Results and Discussion}
 
+% TODO: list connectivity comp. rates from survey table 1
 
-\section{Discussion}
+Typically, mesh compression rates are reported in bits per vertex (bpv) or bits per triangle (bpt). We will be reporting our results in bits per edge (bpe), since this is the most relevant measure for graph compression.
 
 
 \subsection{Future Work}

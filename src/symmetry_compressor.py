@@ -353,14 +353,13 @@ def edge_intersect(G1: nx.Graph, G2: nx.Graph) -> bool:
 
 
 if __name__ == "__main__":
-    # graph = nx.gnp_random_graph(n=30, p=0.5)
     # graph = net.read_pajek("karate_club", data_folder="data\\networks")
     graph = nx.erdos_renyi_graph(n=50, p=0.9)
-    # print(graph)
+    print(graph)
     for caching_mode in [CachingMode.STATIC, CachingMode.DYNAMIC]:
-        # print(f"compressing with caching mode {caching_mode}")
+        print(f"compressing with caching mode {caching_mode}")
         C = compress_bipartite(graph, caching_mode)
-        # print(C)
+        print(C)
         # print("decompressing...")
         # print(C.decompress())
         # print()

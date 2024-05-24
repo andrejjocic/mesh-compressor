@@ -119,8 +119,8 @@ class AtlasCompressedGraph:
 
         self.residual.remove_edges_from(subgraph.edges)
         self.compressed_graphlets.append((graphlet, mapped_nodes))
-        # TODO: try the other encoding if graphlets often reoccur
-        # (we can easily afford extra byte for a switch flag, so decide based on efficiency)
+        # TODO: try the index multiplicity encoding if graphlets often reoccur
+        # (we can easily afford extra byte for a switch flag, so decide based on efficiency?)
 
     def decompress(self, in_place=True) -> nx.Graph:
         graphlet_atlas = nx.graph_atlas_g() if self.atlas is None else self.atlas
@@ -156,7 +156,6 @@ class AtlasCompressedGraph:
                 # we can infer the length of the nodemap from the graphlet
                 for node in nodemap:
                     f.write(struct.pack("<I", node))
-
 
 
     @staticmethod
@@ -222,7 +221,7 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
     if print_stats:
         print("Graphlet stats (#occurences of <index>):")
         for idx, count in sorted(graphlet_stats.items(), key=lambda x: x[1], reverse=True):
-            print(f"{count}x {idx}")
+            print(f"{count}x {idx} (n={graphlet_atlas[idx].number_of_nodes()})")
 
     return Gcomp
 
