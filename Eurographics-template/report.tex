@@ -140,13 +140,15 @@ TODO the abstract
 Polygonal models are widely used for representing 3D objects in computer graphics. With increased rendering system capabilities and the desire for greater precision, the size of these models has been increasing. To cut down transmission and static storage costs, specialized compression schemes have been developed.
 In previously established \cite{meshCompressionSurvey} terms, we will be focusing on lossless single-rate global compression of static polygonal models. This means that we will be considering fixed (non-evolving) data, which will be decompressed it all at once (without progressive transmission at different levels of detail) and in its entirety (not focusing on specific regions of the model as requested by the user).
 
-The information we usually store is the model's geometry (positions of vertices), connectivity / topology (incidence relations among elements), and optionally also attributes (normals, colours, etc.).
+The information we usually store is the model's geometry (positions of vertices), connectivity/topology (incidence relations among elements), and optionally additional vertex/face attributes (normals, colours, etc.).
 Typically the connectivity information takes up the most space (around twice as much as the goemetry information in a triangle mesh homeomorphic to a sphere \cite{rossignac1999edgebreaker}), so it is the most important to compress.
-Many compression methods focus exclusively on manifold triangle meshes (or another constrained structure) to get the best possible results.  
-In this paper we will consider the case of arbitrary polygonal models. Since the connectivity relations can be represented as an undirected graph, we can reduce the problem to that of graph compression.
-One issue with this approach is that we lose face orientation data, which renderers need for shading and face culling. If a renderer can't infer consistent face orientations from just the wireframe, we will need to encode this information separately. This is briefly discussed in section TODO.
-Another small issue is that we can't preserve single-face holes (see TODO), since these can't possibly be inferred from the wireframe alone.
+The vertex-to-vertex connectivity relations, also known as the \textit{wireframe} (or the \textit{1-skeleton} of the underlying simplicial comples, to use a term from topology),
+can be represented as an undirected graph.
+This way we can reduce the mesh compression problem to that of graph compression.
+One issue with this approach is that we lose face orientation data, which renderers need for shading and face culling. If a renderer can't infer consistent face orientations from the wireframe alone, we will need to encode this information separately. This is briefly discussed in section \ref{sec:reconstruction}.
 
+Many compression methods focus exclusively on manifold triangle meshes (or another constrained structure) to get the best possible results.  
+In this paper we will consider the case of arbitrary polygonal models, even irregular (having faces of different degrees).
 Specifically, we will be exploiting symmetries in the graph, which can often occur in the graphical domain.
 
 \section{Mesh File Formats}
@@ -175,11 +177,6 @@ The relative efficiency of a symmetry-compressed representation is defined as
 $\Delta^r(\pi, G) = \frac{|G| - |\pi| - |G^\pi|}{|G|}$.
 % Note that for $G \in \mathcal{S}\mathcal{C}$, $\varDelta^r(\pi, G) \in (0, 1)$ and higher values indicate better compression.\varDelta 
 
-% TODO: move NSC discussion to the next section
-A class of graphs more amenable to practical compression are \textit{near symmetry-compressible} (NSC) graphs. These are ones that can be turned into SC graphs by adding and/or removing a relatively small number of edges.
-Formally, $G \in \mathcal{N}\mathcal{S}\mathcal{C}$ if $\exists H, \pi \in Aut(H)$ such that $|H^\pi| + |\pi| + |H \oplus G| < |G|$. Note that $\mathcal{S}\mathcal{C} \subset \mathcal{N}\mathcal{S}\mathcal{C}$.
-
-We can define the relative compression efficiency for a NSC graph similarly to the SC case.
 
 The main computational issue in compressing a graph is finding a (compressive) automorphism $\pi$,
 and optionally an edge difference $H \oplus G$ that makes finding $\pi$ easier.
@@ -194,18 +191,57 @@ The paper presents two approaches: graphlet search and bipartite completion.
 % This one is a lot slower, but may be more appropriate for our case (if we're not compressing on the fly during transmission).
 Another approach they present is to search for symmetry-compressible subgraphs. Going through all graphlets up to a certain size (in decreasing order of relative compression efficiency). Then a maximal edge-disjoint set of SC subgraphs is greedily selected to be replaced by their CS representations.
 
+\section{Atlas-based Compression}
 We have opted to modify this approach with the help of a \textit{graph atlas} \cite{read1998atlas}, a systematic enumrations of all undirected graphs up to a cerain length. Python's networkx library, which we have chosen for most of our graph data processing, provides access to the 1253 graphlets with $n \leq 7$.
 Instead of $(\pi, H^\pi)$ we simply store $H$'s atlas index and a mapping between nodes of $G$ and $H$.
 It makes sense in this case because we are only looking for small subgraphs.
 Any more than that acn result in unreasonable compression times anyway.
 This may be seen as a dictionary-based graph encoding. Since this takes only $1 + n$ integers to store, it is always at least as efficient as the CS representation since an encoding of $\pi$ requires at least $n$ integers.
 
+% TODO: rel. efficency formula, proof that it's compressive for all connected graphlets for n>=4 (AND TRIANGLE!)
+
 This may be seen as a sort of \textit{instancing} on a sub-mesh level. Instancing is a common technique for reducing the description size of a scene with many repeated objects (e.g. foliage elements) where we only store one copy of the object's geometry and associate each instance with its own coordinate transformation. In our case, we're ``storing'' one copy of a graphlet in the atlas and associating each instance with a vertex mapping, analogous to a coordinate transformation.
 
 \subsection{Compressed file format}
 
+Our first approach to serializing the compressed mesh to a binary files was as follows. The header and vertex data are simply copied into its own file. The connectivity data is a series of 4-byte unsigned integers:
+\begin{enumerate}
+        \item number of edges
+        \item each edge, as a pair of vertex indices
+        \item number of compressed subgraphs
+        \item for each subgraph: its atlas index, followed by $n$ vertex indices (the node mapping).'
+\end{enumerate}
+Note that we can infer $n$ (the size of the graphlet) from the atlas index, so we don't need to store it explicitly. But this approach may duplicate the same atlas index many times, if graphlets reoccur often in the mesh. Indeed, we have observed very skewed distributions of graphlet frequencies in the meshes we tested.
+% TODO: show some data on this
+So we also implemented an index multiplicity encoding, which stores (1-3) same as above, but then for each \textit{unique} atlas index, we store the index and the number of times it occurs in the mesh, followed by this many vertex mappings. This yielded notable increase in relative efficiency. % TODO: show some data on this
+
+\section{Mesh Reconstruction} \label{sec:reconstruction}
+
+Decompressing the wireframe is not the end of the story.
+
+When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
+
+note that enumerating faces can take quite a while. for triangle mesh, complexity is TODO % see nx documentation notes
+
+% TODO: discuss face orientation
+Blendar can figure it out, but meshlab can't sem to. see fig. TODO
+
+We did not support face data.
+
+Another small issue is that we can't preserve single-face holes (see TODO), since these can't possibly be inferred from the wireframe alone.
+
+\section{Experiments}
+
+We have tested our implementation on some of the MeshLab sample meshes. They can be downloaded here: \httpAddr{meshlab.net/\#download}.
 
 \section{Near-Symmetry Compression}
+
+We have also explored the second algorithm presented in \cite{cibej2021automorphisms}, which is based on finding near-symmetry compressible subgraphs.
+
+A class of graphs more amenable to practical compression are \textit{near symmetry-compressible} (NSC) graphs. These are ones that can be turned into SC graphs by adding and/or removing a relatively small number of edges.
+Formally, $G \in \mathcal{N}\mathcal{S}\mathcal{C}$ if $\exists H, \pi \in Aut(H)$ such that $|H^\pi| + |\pi| + |H \oplus G| < |G|$. Note that $\mathcal{S}\mathcal{C} \subset \mathcal{N}\mathcal{S}\mathcal{C}$.
+
+We can define the relative compression efficiency for a NSC graph similarly to the SC case.
 
 \subsection{Bipartite Completion}
 
@@ -225,13 +261,7 @@ Of course we could theoretically also find a symmetric difference $G(U,V) \oplus
 
 
 
-\section{Decompresion}
-
-When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
-
-note that enumerating faces can take quite a while. for triangle mesh, complexity is TODO % see nx documentation notes
-
-\section{Results and Discussion}
+\section{Discussion}
 
 % TODO: list connectivity comp. rates from survey table 1
 

@@ -119,8 +119,6 @@ class AtlasCompressedGraph:
 
         self.residual.remove_edges_from(subgraph.edges)
         self.compressed_graphlets.append((graphlet, mapped_nodes))
-        # TODO: try the index multiplicity encoding if graphlets often reoccur
-        # (we can easily afford extra byte for a switch flag, so decide based on efficiency?)
 
     def decompress(self, in_place=True) -> nx.Graph:
         graphlet_atlas = nx.graph_atlas_g() if self.atlas is None else self.atlas
@@ -138,8 +136,15 @@ class AtlasCompressedGraph:
     @property
     def size(self) -> int:
         """size of the compressed graph, as number of vertex indices"""
-        return 2 * self.residual.number_of_edges() + sum(1 + len(nodemap) for _, nodemap in self.compressed_graphlets)
+        if AtlasCompressedGraph.MULTIPLICITY_ENCODING:
+            index_space = 2 * len(set(graphlet.index for graphlet, _ in self.compressed_graphlets))
+        else:
+            index_space = len(self.compressed_graphlets)
 
+        return 2 * self.residual.number_of_edges() + index_space + sum(len(nodemap) for _, nodemap in self.compressed_graphlets)
+
+    MULTIPLICITY_ENCODING = True # TODO: make this a parameter, or always decide based on efficiency (1 byte for switch flag is fine)
+    """worthwile if graphlets often reoccur (indeed seems the case for meshes)"""
 
     def serialize(self, filename: str) -> None:
         # OPT: some sort of buffering
@@ -150,12 +155,25 @@ class AtlasCompressedGraph:
                 f.write(struct.pack("<II", *edge))
 
             # encode the compressed graphlets
-            f.write(struct.pack("<I", len(self.compressed_graphlets)))
-            for graphlet, nodemap in self.compressed_graphlets:
-                f.write(struct.pack("<I", graphlet.index))
-                # we can infer the length of the nodemap from the graphlet
-                for node in nodemap:
-                    f.write(struct.pack("<I", node))
+            if AtlasCompressedGraph.MULTIPLICITY_ENCODING:
+                idx2mappings = defaultdict(list)
+                for graphlet, nodemap in self.compressed_graphlets:
+                    idx2mappings[graphlet.index].append(nodemap)
+
+                f.write(struct.pack("<I", len(idx2mappings))) # number of unique graphlets
+                for graphlet_idx, mappings in idx2mappings.items():
+                    f.write(struct.pack("<I", graphlet_idx))
+                    f.write(struct.pack("<I", len(mappings))) # see how many mappings must be read later
+                    for nodemap in mappings:
+                        for node in nodemap: # we can infer the length of the nodemap from the graphlet
+                            f.write(struct.pack("<I", node))
+            else:
+                f.write(struct.pack("<I", len(self.compressed_graphlets)))
+                for graphlet, nodemap in self.compressed_graphlets:
+                    f.write(struct.pack("<I", graphlet.index))
+                    # we can infer the length of the nodemap from the graphlet
+                    for node in nodemap:
+                        f.write(struct.pack("<I", node))
 
 
     @staticmethod
@@ -175,15 +193,26 @@ class AtlasCompressedGraph:
             acg.full_size = None
             
             # unpack the compressed graphlets
-            num_graphlets, = struct.unpack("<I", f.read(SIZEOF_INT))
-            for _ in range(num_graphlets): # pbar?
-                graphlet_idx, = struct.unpack("<I", f.read(SIZEOF_INT))
-                n = acg.atlas[graphlet_idx].number_of_nodes()
-                nodemap = struct.unpack("<" + "I"*n, f.read(n * SIZEOF_INT))
-                acg.compressed_graphlets.append((
-                    AtlasGraphlet(graphlet_idx, efficiency=None),
-                    list(nodemap)
-                ))
+            if AtlasCompressedGraph.MULTIPLICITY_ENCODING:
+                unique_graphlets, = struct.unpack("<I", f.read(SIZEOF_INT))
+                for _ in range(unique_graphlets):
+                    graphlet_idx, = struct.unpack("<I", f.read(SIZEOF_INT))
+                    num_graphlets, = struct.unpack("<I", f.read(SIZEOF_INT))
+                    for _ in range(num_graphlets):
+                        n = acg.atlas[graphlet_idx].number_of_nodes()
+                        nodemap = struct.unpack("<" + "I"*n, f.read(acg.atlas[graphlet_idx].number_of_nodes() * SIZEOF_INT))
+                        acg.compressed_graphlets.append((
+                            AtlasGraphlet(graphlet_idx, efficiency=None), list(nodemap)))
+            else:
+                num_graphlets, = struct.unpack("<I", f.read(SIZEOF_INT))
+                for _ in range(num_graphlets): # pbar?
+                    graphlet_idx, = struct.unpack("<I", f.read(SIZEOF_INT))
+                    n = acg.atlas[graphlet_idx].number_of_nodes()
+                    nodemap = struct.unpack("<" + "I"*n, f.read(n * SIZEOF_INT))
+                    acg.compressed_graphlets.append((
+                        AtlasGraphlet(graphlet_idx, efficiency=None),
+                        list(nodemap)
+                    ))
 
         return acg
         

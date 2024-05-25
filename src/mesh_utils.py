@@ -262,7 +262,7 @@ if __name__ == "__main__":
     
     zip_parser = subparsers.add_parser("zip", help="Compress a PLY file.")
     zip_parser.add_argument("input_file", type=str, help="Path to the input PLY file.")
-    zip_parser.add_argument("--max_graphlet", type=int, default=5, help="Maximum graphlet size to compress.")
+    zip_parser.add_argument("--max_graphlet", type=int, default=5, help="Maximum graphlet size to search for (default=5, max=7).")
     zip_parser.add_argument("--verbose", action="store_true", help="Print more compression statistics.")
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
