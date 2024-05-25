@@ -229,7 +229,7 @@ def decompress_ply(folder: str, out_name: str, pbar=True, set_orientation=True, 
     all_cycles = cycles(wireframe, length=face_degree)
     if pbar:
         f = len(wireframe.edges) - len(wireframe.nodes) + 2 # good estimate assuming (roughly) planar graph
-        all_cycles = tqdm(all_cycles, total=f, desc="generating faces")
+        all_cycles = tqdm(all_cycles, total=f, desc="generating faces", ncols=100)
 
     faces = surface_faces(list(all_cycles))
 
@@ -264,6 +264,7 @@ if __name__ == "__main__":
     zip_parser.add_argument("input_file", type=str, help="Path to the input PLY file.")
     zip_parser.add_argument("--max_graphlet", type=int, default=5, help="Maximum graphlet size to search for (default=5, max=7).")
     zip_parser.add_argument("--verbose", action="store_true", help="Print more compression statistics.")
+    # TODO: output path option
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
     unzip_parser.add_argument("folder", type=str, help="Path to the folder containing the compressed data.")

@@ -225,9 +225,10 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
 
     graphlet_atlas = nx.graph_atlas_g()
     Gcomp = AtlasCompressedGraph(G, take_ownership=False, atlas=graphlet_atlas)
-    graphlets = load_atlas_efficiency(n_max=max_graphlet_sz) # TODO: option to halt at certain efficiency threshold
+    graphlets = load_atlas_efficiency(n_max=max_graphlet_sz)
     if sort_by_efficiency: 
         graphlets.sort(key=lambda g: g.efficiency, reverse=True) # OPT: just have the cache sorted by efficiency
+    # TODO: option to halt at given efficiency threshold
 
     graphlet_stats = Counter()
 
