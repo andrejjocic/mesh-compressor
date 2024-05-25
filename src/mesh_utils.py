@@ -16,6 +16,7 @@ import graphlets
 import argparse
 import re
 from orientable import orient, Vertex, Edge, Triangle, Simplex, SimplexMap
+from timeit import default_timer as time
 
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
@@ -135,7 +136,7 @@ def compress_ply(input_file: str, verbose=False, **compressor_kwargs):
     # compress the connectivity data
     # wf_comp = symm.compress_bipartite(wireframe, caching_mode=symm.CachingMode.DYNAMIC)
     wf_comp = graphlets.compress_subgraphlets(wireframe, **compressor_kwargs)
-    if verbose: print(f"wireframe compressed to {wf_comp}")
+    print(f"wireframe compressed to {wf_comp}")
 
     # serialize compressed graph
     edge_path = out_folder / f"{in_file.stem}_{face_degree}-gons.acgf"
@@ -157,12 +158,17 @@ def compress_ply(input_file: str, verbose=False, **compressor_kwargs):
         return None
 
 
-def cycles(graph: nx.Graph, length: int) -> Iterator[List[int]]:
-    """Generate cycles of a given length in a graph."""
-    # NOTE: can we just use nx.simple_cycles instead? chords on faces are very strange for a mesh
-    # complexity of nx.simple_cycles: O((f + n)(len - 1)d^len) for f faces, mean degree d
-    # for cycle in nx.chordless_cycles(graph, length_bound=length):
-    for cycle in nx.simple_cycles(graph, length_bound=length):
+def cycles(graph: nx.Graph, length: int, ensure_chordless=False) -> Iterator[List[int]]:
+    """Generate cycles of a given length in a graph.
+    
+    If ensure_chordless is True, explicitly check that output cycles are chordless
+    (i.e. no edges between non-adjacent vertices). Note that this should not happen for regular
+    meshes (with faces of the same degree).
+
+    Otherwise the complexity is O((f + n)(len - 1)d^len) for f faces, mean degree d
+    """
+    cycle_gen = nx.chordless_cycles if ensure_chordless else nx.simple_cycles
+    for cycle in cycle_gen(graph, length_bound=length):
         if len(cycle) == length:
             yield cycle    
 
@@ -258,6 +264,7 @@ def decompress_ply(folder: str, out_name: str, pbar=True, set_orientation=True, 
 if __name__ == "__main__":
     # mesh_path = r"data\MeshLab_sample_meshes\non_manif_hole.ply"
     parser = argparse.ArgumentParser(description="(de-)compress PLY files using graphlet atlas compression.")
+    parser.add_argument("--time", action="store_true", help="Print execution time.")
     subparsers = parser.add_subparsers(dest="command")
     
     zip_parser = subparsers.add_parser("zip", help="Compress a PLY file.")
@@ -268,13 +275,17 @@ if __name__ == "__main__":
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
     unzip_parser.add_argument("folder", type=str, help="Path to the folder containing the compressed data.")
-    unzip_parser.add_argument("--output_file", type=str, default="decompressed  ", help="Name of the output PLY file.")
+    unzip_parser.add_argument("--output_file", type=str, default="decompressed", help="Name of the output PLY file.")
     unzip_parser.add_argument("--no_orientation", action="store_false", help="Don't set face orientation.")
     unzip_parser.add_argument("--flip_orientation", action="store_true",
                               help="Flip the orientation of all faces, w.r.t. the (arbitrary) default orientation.")
     
     args = parser.parse_args()
+    t0 = time()
     if args.command == "zip":    
         compress_ply(args.input_file, max_graphlet_sz=args.max_graphlet, verbose=args.verbose, print_stats=args.verbose)
     elif args.command == "unzip":
         decompress_ply(args.folder, out_name=args.output_file, set_orientation=args.no_orientation, flip_faces=args.flip_orientation)
+
+    if args.time:
+        print(f"Execution time: {time() - t0:.6f} seconds")

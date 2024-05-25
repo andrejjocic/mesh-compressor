@@ -164,7 +164,7 @@ adjacency graph, which is the \textit{dual} graph of the wireframe, $W^*$. Assum
 But this would just inflate the typical face-list mesh format, unless we could come up with more compact face descriptors than vertex lists.
 If we are willing to give up the vertex-to-attribute mapping (and e.g. infer positions with a layout algorithm), we can just compress the connectivity information alone. In this case compressing the face incidence graph may be a viable option, since we don't have to list the vertices of each face but just an arbitrary face identifier.
 % TODO: discuss face rank encoding
-However, this is not something we will be considering in this paper. 
+However, this is not something we will be considering in this paper, since it does not seem like a common use case in the context of 3D graphics.
 
 % \subsection{Related Work}
 % slap some survey papers in here (graph compression, mesh compression)
@@ -229,7 +229,7 @@ In theory this encoding is only better if the total number of compressed graphle
 \subsection{Experiments}
 
 We have tested our implementation on some of the MeshLab sample meshes. They can be downloaded here: \httpAddr{meshlab.net/\#download}.
-Table \ref{tab:compression_nonmanif} shows compression performance on \texttt{non\_manif\_hole.ply}, a mesh with 755 triangles (Fig. TODO).
+Table \ref{tab:compression_nonmanif} shows compression performance on \texttt{non\_manif\_hole.ply}, a non-manifold mesh with 755 triangles.
 
 \begin{table}
         \centering
@@ -237,7 +237,7 @@ Table \ref{tab:compression_nonmanif} shows compression performance on \texttt{no
         \hline
         $n_{max}$ & $\delta^r(W)$ & $R_{conn}$ & $R_{total}$ & time \\
         \hline
-        4 & 0.534 & 45.0\% & 64.2\% & 0s \\ % TODO: more accurate time
+        4 & 0.534 & 45.0\% & 64.2\% & 0.4s \\
         5 & 0.564 & 42.1\% & 62.3\% & 2s \\
         6 & 0.596 & 39.0\% & 60.3\% & 17s \\
         7 & 0.633 & 35.4\% & 57.9\% & 3min 5s \\
@@ -251,7 +251,31 @@ Compression time is with a pure Python implementation, running on a Ryzen 7 5800
 
 We also tried simply zipping the PLY file. This yielded a very similar compression rate, which reflects poorly on the efficiency of our serialization. However, the general-purpose file compressor is also allowed to zip the vertex data, which we have left untouched. Of course, we can still zip the binary file to exceed the performance of the general-purpose compressor.
 
-\section{Near-Symmetry Compression}
+% TODO?: list connectivity comp. rates from survey table 1
+% Typically, mesh compression rates are reported in bits per vertex (bpv) or bits per triangle (bpt). We will be reporting our results in bits per edge (bpe), since this is the most relevant measure for graph compression.
+
+Table \ref{tab:more_meshes} shows compression performance on other MeshLab sample meshes.
+We have only shown the relative efficiency, since this is really the metric that tells us how appropriate this compression paradigm is for the graphical domain. Raw compression ratios would be more informative given a more bit-efficient encoding and combination with vertex data compression, which we have not implemented.
+
+\begin{table}
+        \centering
+        \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        name & faces & $\delta^r(W)$ & time \\
+        \hline
+        bunny2 & 1000 & 0.522 & 0.5s \\
+        bunny10k & 9999 & 0.531 & 4s \\
+        bunny70k & 69451 & 0.537 & 31s \\
+        % TODO: some more meshes, especially non-triangle ones
+        \hline
+\end{tabular}
+\caption{Compression performance on more sample meshes with $n_{max} = 4$. Second column lists number of triangles, or quads in the case of \texttt{T.ply}.}
+\label{tab:more_meshes}
+\end{table}
+
+
+
+\section{Near-Symmetry Compression} \label{sec:near_symmetry}
 
 We have also explored the second algorithm presented in \cite{cibej2021automorphisms}, which is based on finding near-symmetry compressible subgraphs.
 
@@ -265,7 +289,7 @@ We can define the relative compression efficiency for a NSC graph similarly to t
 Again we only need to look for NSC subgraphs, since
 if $H \subseteq G$ and $H \in \mathcal{N}\mathcal{S}\mathcal{C}$, then $G \in \mathcal{N}\mathcal{S}\mathcal{C}$.
 
-\subsection{Bipartite Completion}
+\subsection{Bipartite Completion} \label{sec:bipartite}
 
 This is the first one we experimented with, because of superior running time.
 The idea is to repeatedly find near-complete bipartite subgraphs (which have high relative efficiency) and replace them with their compressed representation. These are found by a greedy optimization starting from each vertex.
@@ -284,40 +308,50 @@ Of course we could theoretically also find a symmetric difference $G(U,V) \oplus
 
 \section{Mesh Reconstruction} \label{sec:reconstruction}
 
-Decompressing the wireframe is not the end of the story.
+When it comes to reconstructing the original mesh,
+decompressing the wireframe is hardly the end of the story.
 
-When decompressing, we will need to compute the facial walks of the skeleton in order to produce the original face list.
+To produce the list of faces, we need to compute the facial walks of the wireframe.
+In the case of a regular mesh (with all faces having the same degree), we can just enumerate all simple cycles of this length. This has time complexity $O((f + n)(d - 1)k^d)$ for a graph with $n$ vertices, $f$ faces of degree $d$, and average vertex degree $k$. Even though $k < 6$ for planar graphs, this can still take quite a while for large meshes.
+For the 10 thousand triangle bunny mesh listed in Table \ref{tab:more_meshes}, this took 3 entire minutes!
 
-note that enumerating faces can take quite a while. for triangle mesh, complexity is TODO % see nx documentation notes
-% TODO: show some data on this
+There is also the issue of \textit{internal} cycles, whose corresponding faces would end up inside the mesh (just under the surface). % TODO show an example of this
+We have made the safe assumption that the original mesh has no internal faces, so we can filter these out. They can be identified as the faces with all edges incident on more than two faces.
 
-% TODO: discuss face orientation
-Blender 4.0 can figure it out, but meshlab can't sem to. see fig. TODO
+Otherwise, if we are enumerating cycles of variying degrees, we need to ensure that all faces of non-minimal degree are \textit{chordless}, i.e. they don't have any diagonals. This even further increases decompression time. % TODO figure out the time complexity of this
+Note that we have not implemented this, since irregular meshes are not very common in practice.
 
-We did not support face data.
+The facial walks also lack a crucial piece of information: face orientation (we can think of this as clockwise or counter-clockwise from a fixed perspective). This is needed by renderers to compute the surface normals and to decide which faces are front-facing.
+We tried opening decompressed meshes in Blender 4.0 and MeshLab 2023.12 without addressing this issue.
+We have observed that Blender 4.0 can fix inconsistent face orientations automatically, but MeshLab did not attempt to do so, resulting in incorrect shading on about half of the faces.
+% TODO show screenshot
+We have only implemented a solution for orientable triangle meshes, where we can arbitrarily fix the orientation of one face (on each connected component) and propagate it to the rest of the mesh. This could be easily extended to general orientable manifolds, but for any others it is unclear how to compute a reasonable orientation. In that case, we could just store the face orientation data separately as a bit-vector, but this requires a reproducible ordering of faces (e.g. rank in lexicographic ordering).
+This is a worthwhile feature to pursue in the future, since it would allow us to carry over arbitrary face data (like colours) that can appear in PLY files; for now we have ignored such data. 
+% TODO discuss the canonical face walk thing
+But coming up with a reproducible ordering of faces comes with the issue of single-face holes (see Fig. TODO).
+Since these can't possibly be inferred from the wireframe alone, we would need to find them at compression time and store them separately.
+This is such a niche case that we have simply ignored it in our implementation. This results in such holes being patched up in the decompressed mesh.
 
-Another small issue is that we can't preserve single-face holes (see TODO), since these can't possibly be inferred from the wireframe alone.
 
-% TODO: discuss internal faces
-we made the safe assumption that there are no internal faces. just like single-face holes, we could explicitly encode these edgecases, but it seems a niche feature to implement for now.
+\section{Conclusion}
 
-
-
-\section{Discussion}
-
-% TODO: list connectivity comp. rates from survey table 1
-
-Typically, mesh compression rates are reported in bits per vertex (bpv) or bits per triangle (bpt). We will be reporting our results in bits per edge (bpe), since this is the most relevant measure for graph compression.
-
+We have implemented a proof-of-concept mesh compression tool, available at \httpAddr{github.com/andrejjocic/mesh-compressor}.
+Many features remain to be implemented to make it practical.
 
 \subsection{Future Work}
-\begin{itemize}
-        \item bit-efficient encoding (instead of pickle dump)
-        \item graphlet heuristic sort with eg. orbit counting stats
-        \item alternative automorphism search algorithms, suited to the graphical domain
-\end{itemize}
 
-% \subsection{Conclusions}
+
+% \item alternative automorphism search algorithms, suited to the graphical domain
+The class of near-symmetry compressible graphs discussed in section \ref{sec:near_symmetry} is a very general formulation, from which we could derive many domain-specific algorithms. The bipartite completion algorithm unfortunately turns out to be unsuited for the graphical domain, but we could come up with something more tailored to the structure of polygonal meshes. For example, if we limit ourselves to manifolds, or even further, to triangular or quadrangular ones, we may be able to find highly compressive symmetries.
+Alternatively, we could use the assumption of a (near-)planar graph to speed up certain computations like facial walk enumeration, % NOTE: how??
+and reduce the search space for automorphisms (e.g. filter out non-planar graphlets in a matching algorithm).
+The heuristic sorting of graphlets could also account for common graphlet frequencies in the graphical domain, which we have observed to be very skewed. This way we might even break out of the loop over graphlets early, allowing us to look for larger ones without running into prohibitively long compression times.
+
+We have not done a very extensive evaluation of our compressor. Since the efficacy of this kind of compression is very much dependent on the density of the mesh, we would like to observe performance metrics \textit{with respect to} mesh density. To make this metrics comparable, we obviously don't want to use completely different meshes, but rather meshes of the same object with different levels of tesselation. 
+A principled way to generate such a series from a point cloud would be to use a \textit{filtration}, a construction from topological data analysis. This would, given a radius parameter $\varepsilon$, produce a simplicial complex (generalization of triangle mesh) with edges connecting points within $\varepsilon$ of each other. % TODO: look into the theory of this
+
+We have limited ourselves to the simplest case of lossless single-rate global compression of static data. But the approaches we have described may naturally be extended to other compression modalities. For example, lossy compression could be achieved by replacing graphlets with ones that can be represented more compactly, but are not too different. In the graphical domain, we would usually want to formulate this notion of similarity based on human perception. Such perceptual metrics have been studied in the literature
+CITATION NEEDED. % see mesh compression survey page 33
 
 
 %-------------------------------------------------------------------------
