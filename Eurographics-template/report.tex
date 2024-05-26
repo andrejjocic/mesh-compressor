@@ -42,6 +42,8 @@
 \usepackage{egweblnk}
 \usepackage{cite}
 
+% \usepackage{multirow}
+
 % For backwards compatibility to old LaTeX type font selection.
 % Uncomment if your document adheres to LaTeX2e recommendations.
 % \let\rm=\rmfamily    \let\sf=\sffamily    \let\tt=\ttfamily
@@ -275,18 +277,18 @@ Table \ref{tab:more_meshes} shows compression performance on other MeshLab sampl
 We have only shown the relative efficiency, since this is really the metric that tells us how appropriate this compression paradigm is for the graphical domain. Raw compression ratios would be more informative given a more bit-efficient encoding and combination with vertex data compression, which we have not implemented.
 
 \begin{table}
-        \centering
-        \begin{tabular}{|c|c|c|c|c|}
-        \hline
-        name & triangles & $\delta^r(W)$ & time \\
-        \hline
-        bunny2 & 1000 & 0.522 & 0.5s \\
-        bunny10k & 9999 & 0.531 & 4s \\
-        bunny70k & 69451 & 0.537 & 31s \\
-        screwdriver & 13574 & 0.534 & 7s \\
-        \hline
+\centering
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+name & triangles & $\delta^r(W)$ & time \\
+\hline
+bunny2 & 1000 & .522 / .576 & 0.5s / 3s \\
+bunny10k & 9999 & .531 / .584 & 4s / 39s \\
+bunny70k & 69451 & .537 / .580 & 31s / 5min 6s \\
+screwdriver & 13574 & .534 / .581 & 7s / 59s \\
+\hline
 \end{tabular}
-\caption{Compression performance on more sample meshes with $n_{max} = 4$.}
+\caption{Compression performance on more sample meshes. Compression metrics reported with $n_{max} = 4$ and $n_{max} = 5$.}
 \label{tab:more_meshes}
 \end{table}
 
@@ -360,9 +362,9 @@ This is such a niche case that we have simply ignored it in our implementation. 
 
 \section{Conclusion}
 
-We have implemented a proof-of-concept mesh compression tool,
+We have implemented a proof-of-concept PLY-frmat mesh compression tool,
 available at \httpAddr{github.com/andrejjocic/mesh-compressor}.
-The tool can compress the connectivity data in a PLY file to around 45\% of its original size, but many potential improvements remain.
+The tool can compress the connectivity data in moderately-sized mesh to around 45\% of its original size in reasonable time, but many potential improvements remain.
 
 \subsection{Future Work}
 
@@ -373,7 +375,7 @@ The heuristic sorting of graphlets could also account for common graphlet freque
 
 We have not done a very extensive evaluation of our compressor. Since the efficacy of this kind of compression is very much dependent on the density of the mesh, we would like to observe performance metrics \textit{with respect to} mesh density. To make these metrics comparable, we obviously don't want to use completely different meshes, but rather meshes of the same object with different levels of tessellation. 
 A principled way to generate such a series from a point cloud $S$ is a \textit{filtration}, a construction from topological data analysis.
-This is a sequence of \textit{simplicial complexes} (something very similar to a triangle mesh) obtained by varying a parameter $r$, where increasing $r$ increases the density of the complex in some way, as defined by the particular type of complex. Perhaps the most appropriate choice for the graphical domain is the \textit{Čech complex} Č$(S,r)$, which preserves many geometric properties of the point cloud.
+This is a sequence of \textit{simplicial complexes} (something very similar to a triangle mesh) obtained by varying a parameter $r$, where increasing $r$ increases the density of the complex in some way, as defined by the particular type of complex. Perhaps the most appropriate choice for the graphical domain is the \textit{Čech complex} Č$(S,r)$, which preserves many topological properties of the point cloud.
 
 We have limited ourselves to the simplest case of lossless single-rate global compression of static data. But the approaches we have described may naturally be extended to other compression modalities. For example, lossy compression could be achieved by replacing graphlets with ones that can be represented more compactly, but are not too different. In the graphical domain, we should formulate this notion of similarity based on human perception. Such perceptual metrics have been studied in the literature \cite{corsini2013perceptual}.
 
