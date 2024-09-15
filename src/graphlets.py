@@ -133,6 +133,9 @@ class AtlasCompressedGraph:
     def relative_efficiency(self) -> float:
         return (self.full_size - self.size) / self.full_size
     
+    MULTIPLICITY_ENCODING = True # TODO: make this a parameter, or always decide based on efficiency (1 byte for switch flag is fine)
+    """worthwile if graphlets often reoccur (indeed seems the case for meshes)"""
+    
     @property
     def size(self) -> int:
         """size of the compressed graph, as number of vertex indices"""
@@ -143,8 +146,6 @@ class AtlasCompressedGraph:
 
         return 2 * self.residual.number_of_edges() + index_space + sum(len(nodemap) for _, nodemap in self.compressed_graphlets)
 
-    MULTIPLICITY_ENCODING = True # TODO: make this a parameter, or always decide based on efficiency (1 byte for switch flag is fine)
-    """worthwile if graphlets often reoccur (indeed seems the case for meshes)"""
 
     def serialize(self, filename: str) -> None:
         # OPT: some sort of buffering

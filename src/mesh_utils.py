@@ -173,6 +173,25 @@ def cycles(graph: nx.Graph, length: int, ensure_chordless=False) -> Iterator[Lis
             yield cycle    
 
 
+def triangles(graph: nx.Graph) -> Iterator[List[int]]:
+    """Generate all unique triangles in a graph."""
+    G = nx.convert_node_labels_to_integers(graph, first_label=0, label_attribute="old_label")
+    n = G.number_of_nodes()
+
+    def common_neighbors(u, v):
+        return set(G[u]) & set(G[v]) # OPT: linear time with sorted adjacency lists
+
+    for u in range(n - 2):
+        for v in G[u]:
+            if u < v:
+                for w in common_neighbors(u, v):
+                    if v < w:
+                        yield [G.nodes[x]["old_label"] for x in (u, v, w)]
+                        # assert u < v < w
+                        # assert (u, v, w) not in yielded
+                        # yielded.add((u, v, w))
+
+
 def surface_faces(cycles: List[List[int]]) -> List[List[int]]:
     """Filter out all the cycles inside the surface (ones with all edges incident on more than 2 faces)."""
     faces_on_edge = SimplexMap(key_dimension=1, map_constructor=lambda: defaultdict(list))
@@ -205,12 +224,13 @@ def surface_faces(cycles: List[List[int]]) -> List[List[int]]:
     return surface            
     
 
-def decompress_ply(folder: str, out_name: str, pbar=True, set_orientation=True, flip_faces=False) -> PlyData:
+def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True, flip_faces=False) -> PlyData:
     """Decompress a PLY file's connectivity data using graphlet atlas compression.
     ### Parameters:
     - folder: path to the folder containing the compressed data
     - pbar: show progress bar
-    - set_orientation: orient the faces of the decompressed mesh (if they form an orientable 2-manifold)"""
+    - set_orientation: orient the faces of the decompressed mesh (if they form an orientable 2-manifold)
+    - flip_faces: flip the orientation of all faces, w.r.t. the (arbitrary) default orientation"""
     folder: Path = Path(folder)
     if not folder.exists():
         raise FileNotFoundError(f"Folder {folder} not found!")
@@ -232,7 +252,7 @@ def decompress_ply(folder: str, out_name: str, pbar=True, set_orientation=True, 
         face_degree = 3
         print(f"WARNING: face degree not found in filename {edge_path.stem}, assuming triangular faces")
 
-    all_cycles = cycles(wireframe, length=face_degree)
+    all_cycles = triangles(wireframe) if face_degree == 3 else cycles(wireframe, length=face_degree)
     if pbar:
         f = len(wireframe.edges) - len(wireframe.nodes) + 2 # good estimate assuming (roughly) planar graph
         all_cycles = tqdm(all_cycles, total=f, desc="generating faces", ncols=100)
