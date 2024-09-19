@@ -1,22 +1,18 @@
 from typing import List, Tuple, Set, Dict, Optional, TypeAlias, Iterator
 from collections import defaultdict, Counter
-from dataclasses import dataclass
-from pprint import pprint
 import numpy as np
-import math
-import glob
 from tqdm import tqdm
 from plyfile import PlyData, PlyElement
 import networkx as nx
 import network_utils
 import symmetry_compressor as symm
-import pickle
 from pathlib import Path
 import graphlets
 import argparse
 import re
 from orientable import orient, Vertex, Edge, Triangle, Simplex, SimplexMap
 from timeit import default_timer as time
+import struct
 
 
 def export_ply(triangulation, points: List[Tuple[float, float, float]], description=""):
@@ -97,7 +93,7 @@ def assertEqualGraphs(g1: nx.Graph, g2: nx.Graph):
     assert set(g1.edges) == set(g2.edges)
 
 
-def compress_ply(input_file: str, verbose=False, **compressor_kwargs):
+def compress_ply(input_file: str, encode_holes=True, verbose=False, **compressor_kwargs):
     """Compress a PLY file's connectivity data using graphlet atlas compression."""
     in_file = Path(input_file)
     if not in_file.exists():
@@ -113,7 +109,6 @@ def compress_ply(input_file: str, verbose=False, **compressor_kwargs):
         raise ValueError(F"Only vertex-face PLY files are supported, found {elem_names}")
     
     wireframe, face_degrees = skeleton(plydata)
-    # wireframe = face_adjacency_graph(plydata)
     if len(face_degrees) == 1:
         face_degree = face_degrees[0]
     else:
@@ -126,7 +121,6 @@ def compress_ply(input_file: str, verbose=False, **compressor_kwargs):
     ignored_props = [p.name for p in plydata["face"].properties if p.name != "vertex_indices"]
     for propname in ignored_props:
         # TODO: copy over properties of face element (so they can be matched to faces)
-        # see https://app.todoist.com/app/task/support-face-data-6VJ966293G827VgF
         print(f"WARNING: ignoring property {propname} of face element! (compression ratio incorrect)")
 
     PlyData([plydata["vertex"]]).write(vtx_path)
@@ -134,14 +128,31 @@ def compress_ply(input_file: str, verbose=False, **compressor_kwargs):
     if verbose: print(f"vertices size: {vtxdata_sz} bytes")
 
     # compress the connectivity data
-    # wf_comp = symm.compress_bipartite(wireframe, caching_mode=symm.CachingMode.DYNAMIC)
     wf_comp = graphlets.compress_subgraphlets(wireframe, **compressor_kwargs)
     print(f"wireframe compressed to {wf_comp}")
 
     # serialize compressed graph
-    edge_path = out_folder / f"{in_file.stem}_{face_degree}-gons.acgf"
-    wf_comp.serialize(edge_path)
-    graph_size = edge_path.stat().st_size
+    conn_path = out_folder / f"{in_file.stem}_{face_degree}-gons.acgf"
+    wf_comp.serialize(conn_path)
+
+    if encode_holes:
+        if verbose: print("checking for holes in the mesh...")
+        actual_faces = {tuple(sorted(face)) for face in plydata["face"]["vertex_indices"]}
+        holes = []
+        for potential_face in surface_faces(wireframe, face_degree, pbar=False):
+            if tuple(sorted(potential_face)) not in actual_faces:
+                holes.append(potential_face)
+        
+        if verbose: print(f"found {len(holes)} holes in the mesh")
+
+        # append them to the compressed connectivity data
+        with open(conn_path, "ab") as f:
+            for hole in holes:
+                f.write(struct.pack("<I", len(hole))) # NOTE: not needed if only supporting regular meshes
+                f.write(struct.pack(f"<{len(hole)}I", *hole))
+
+
+    graph_size = conn_path.stat().st_size
     if verbose: print(f"graph size: {graph_size} bytes")
     if verbose: print(f"total size: {vtxdata_sz + graph_size} bytes")
     
@@ -187,22 +198,28 @@ def triangles(graph: nx.Graph) -> Iterator[List[int]]:
                 for w in common_neighbors(u, v):
                     if v < w:
                         yield [G.nodes[x]["old_label"] for x in (u, v, w)]
-                        # assert u < v < w
-                        # assert (u, v, w) not in yielded
-                        # yielded.add((u, v, w))
 
 
-def surface_faces(cycles: List[List[int]]) -> List[List[int]]:
-    """Filter out all the cycles inside the surface (ones with all edges incident on more than 2 faces)."""
+def surface_faces(graph: nx.Graph, face_degree: int, pbar: bool) -> List[List[int]]:
+    """Compute the facial walks (of length `face_degree`) of a graph.
+    Filter out all the cycles under the surface (ones with all edges incident on more than 2 faces)."""
+
+    all_cycles = triangles(graph) if face_degree == 3 else cycles(graph, length=face_degree)
+    if pbar:
+        f = len(graph.edges) - len(graph.nodes) + 2 # good estimate assuming (roughly) planar graph
+        all_cycles = tqdm(all_cycles, total=f, desc="generating faces", ncols=100)
+
+    all_cycles = list(all_cycles)
+
     faces_on_edge = SimplexMap(key_dimension=1, map_constructor=lambda: defaultdict(list))
-    for cycle in cycles:
+    for cycle in all_cycles:
         for edge in zip(cycle, cycle[1:] + cycle[:1]):
             faces_on_edge[edge].append(cycle)
 
     surface = []
     boundary_size = 0
 
-    for cycle in cycles:
+    for cycle in all_cycles:
         edges = list(zip(cycle, cycle[1:] + cycle[:1]))
         nonmanifold_edges = list(filter(lambda e: len(faces_on_edge[e]) > 2, edges))
         boundary_edges = list(filter(lambda e: len(faces_on_edge[e]) == 1, edges))
@@ -219,7 +236,7 @@ def surface_faces(cycles: List[List[int]]) -> List[List[int]]:
             # this case impossible if we computed the SimplexMap correctly (?)
             print(f"WARNING: face {cycle} has {internal_edges} internal and {n_nonmf} non-manifold edges")
 
-    print(f"removed {len(cycles) - len(surface)} interior faces")
+    print(f"removed {len(all_cycles) - len(surface)} interior faces")
     print(f"found {boundary_size} boundary edges")
     return surface            
     
@@ -229,6 +246,7 @@ def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True,
     ### Parameters:
     - folder: path to the folder containing the compressed data
     - pbar: show progress bar
+    - encode_holes: check for single-face holes in the mesh so they may be preserved in the decompressed mesh
     - set_orientation: orient the faces of the decompressed mesh (if they form an orientable 2-manifold)
     - flip_faces: flip the orientation of all faces, w.r.t. the (arbitrary) default orientation"""
     folder: Path = Path(folder)
@@ -236,28 +254,43 @@ def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True,
         raise FileNotFoundError(f"Folder {folder} not found!")
     
     vtx_path: Path = next(folder.glob("*_vertices.ply")) # TODO: proper error reporting
-    edge_path: Path = next(folder.glob("*.acgf"))
+    conn_path: Path = next(folder.glob("*.acgf"))
 
     # load vertex data
     plydata = PlyData.read(vtx_path)
 
     # load compressed wireframe
-    wf_comp = graphlets.AtlasCompressedGraph.deserialize(edge_path)
-    wireframe = wf_comp.decompress(in_place=True)
+    wf_comp, bytes_read = graphlets.AtlasCompressedGraph.deserialize(conn_path)
 
-    # reconstruct face data
-    if (mtch := re.match(r".*_(\d+)-gons", edge_path.stem)) is not None:
+    if (mtch := re.match(r".*_(\d+)-gons", conn_path.stem)) is not None:
         face_degree = int(mtch.group(1))
     else:
         face_degree = 3
-        print(f"WARNING: face degree not found in filename {edge_path.stem}, assuming triangular faces")
+        print(f"WARNING: face degree not found in filename {conn_path.stem}, assuming triangular faces")
+    
+    # check for holes in the mesh
+    if bytes_read < conn_path.stat().st_size:
+        SIZEOF_INT = 4 # bytes
+        with open(conn_path, "rb") as f:
+            f.seek(bytes_read)
+            holes = set()
+            while f.tell() < conn_path.stat().st_size:
+                hole_sz = struct.unpack("<I", f.read(SIZEOF_INT))[0]
+                hole = struct.unpack(f"<{hole_sz}I", f.read(SIZEOF_INT * hole_sz))
+                holes.add(tuple(sorted(hole)))
+        
+        print(f"recovered {len(holes)} holes from the original mesh")
+    else:
+        holes = None
 
-    all_cycles = triangles(wireframe) if face_degree == 3 else cycles(wireframe, length=face_degree)
-    if pbar:
-        f = len(wireframe.edges) - len(wireframe.nodes) + 2 # good estimate assuming (roughly) planar graph
-        all_cycles = tqdm(all_cycles, total=f, desc="generating faces", ncols=100)
+    wireframe = wf_comp.decompress(in_place=True)
+    faces = surface_faces(wireframe, face_degree, pbar)
 
-    faces = surface_faces(list(all_cycles))
+    # remove holes from faces (NOTE: should we do this before or after setting orientation?)
+    if holes is not None:
+        nf = len(faces)
+        faces = [f for f in faces if tuple(sorted(f)) not in holes]
+        print(f"removed {nf - len(faces)} faces (holes)")
 
     if set_orientation and face_degree != 3:
         print(f"WARNING: face orientation not supported for face degree {face_degree}")
@@ -282,7 +315,6 @@ def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True,
 
 
 if __name__ == "__main__":
-    # mesh_path = r"data\MeshLab_sample_meshes\non_manif_hole.ply"
     parser = argparse.ArgumentParser(description="(de-)compress PLY files using graphlet atlas compression.")
     parser.add_argument("--time", action="store_true", help="Print execution time.")
     subparsers = parser.add_subparsers(dest="command")
@@ -291,11 +323,14 @@ if __name__ == "__main__":
     zip_parser.add_argument("input_file", type=str, help="Path to the input PLY file.")
     zip_parser.add_argument("--max_graphlet", type=int, default=5, help="Maximum graphlet size to search for (default=5, max=7).")
     zip_parser.add_argument("--verbose", action="store_true", help="Print more compression statistics.")
+    zip_parser.add_argument("--preserve_holes", action="store_true",
+                            help="Check for single-face holes in the mesh so they may be preserved (may take a few extra seconds).")
     # TODO: output path option
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
     unzip_parser.add_argument("folder", type=str, help="Path to the folder containing the compressed data.")
     unzip_parser.add_argument("--output_file", type=str, default="decompressed", help="Name of the output PLY file.")
+    unzip_parser.add_argument("--pbar", action="store_true", help="Show (rough) progress bar for face enumeraton.")
     unzip_parser.add_argument("--no_orientation", action="store_false", help="Don't set face orientation.")
     unzip_parser.add_argument("--flip_orientation", action="store_true",
                               help="Flip the orientation of all faces, w.r.t. the (arbitrary) default orientation.")
@@ -303,9 +338,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     t0 = time()
     if args.command == "zip":    
-        compress_ply(args.input_file, max_graphlet_sz=args.max_graphlet, verbose=args.verbose, print_stats=args.verbose)
+        compress_ply(args.input_file, max_graphlet_sz=args.max_graphlet, encode_holes=args.preserve_holes,
+                     verbose=args.verbose, print_stats=args.verbose)
     elif args.command == "unzip":
-        decompress_ply(args.folder, out_name=args.output_file, set_orientation=args.no_orientation, flip_faces=args.flip_orientation)
+        decompress_ply(args.folder, out_name=args.output_file, pbar=args.pbar,
+                       set_orientation=args.no_orientation, flip_faces=args.flip_orientation)
 
     if args.time:
         print(f"Execution time: {time() - t0:.6f} seconds")

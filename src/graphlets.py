@@ -98,7 +98,7 @@ class AtlasCompressedGraph:
     """size of the full graph, as number of vertex indices"""
     compressed_graphlets: List[Tuple[AtlasGraphlet, List[int]]]
     """compressed subgraphs, as a list of graphlet IDs and node mappings"""
-    atlas: Optional[List[nx.Graph]]
+    atlas: Optional[List[nx.Graph]] # make me a cached property?
     """optional reference to the graph atlas"""
 
     def __init__(self, G: nx.Graph, take_ownership=False, atlas: Optional[List[nx.Graph]] = None):
@@ -178,7 +178,8 @@ class AtlasCompressedGraph:
 
 
     @staticmethod
-    def deserialize(filename: str) -> "AtlasCompressedGraph":
+    def deserialize(filename: str) -> Tuple["AtlasCompressedGraph", int]:
+        """return the deserialized graph and the number of bytes read"""
         filename = Path(filename)
         SIZEOF_INT = 4 # bytes
 
@@ -215,7 +216,9 @@ class AtlasCompressedGraph:
                         list(nodemap)
                     ))
 
-        return acg
+            nbytes = f.tell()
+
+        return acg, nbytes
         
 
 
@@ -275,7 +278,7 @@ if __name__ == "__main__":
     bin_path = Path("karate_compressed.acgf")
     Gcomp.serialize(bin_path)
 
-    Gcomp2 = AtlasCompressedGraph.deserialize(bin_path)
+    Gcomp2, _ = AtlasCompressedGraph.deserialize(bin_path)
     print(Gcomp2)
     G2 = Gcomp2.decompress()
     print(G2)

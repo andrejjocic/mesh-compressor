@@ -41,7 +41,7 @@ class TestAtlasCompressor(unittest.TestCase):
         self.assertValidEfficiency(C.relative_efficiency)
         bin_path = Path("test.acgf") # atlas-compressed graph file
         C.serialize(bin_path)
-        C2 = graphlets.AtlasCompressedGraph.deserialize(bin_path)
+        C2, _ = graphlets.AtlasCompressedGraph.deserialize(bin_path)
         bin_path.unlink()
         G2 = C2.decompress()
         self.assertEqualGraphs(G, G2)
