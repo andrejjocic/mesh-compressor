@@ -169,7 +169,7 @@ def compress_ply(input_file: str, encode_holes=True, verbose=False, **compressor
         return None
 
 
-def cycles(graph: nx.Graph, length: int, ensure_chordless=False) -> Iterator[List[int]]:
+def cycles(graph: nx.Graph, length: int, ensure_chordless: bool) -> Iterator[List[int]]:
     """Generate cycles of a given length in a graph.
     
     If ensure_chordless is True, explicitly check that output cycles are chordless
@@ -202,7 +202,7 @@ def triangles(graph: nx.Graph) -> Iterator[List[int]]:
 
 def surface_faces(graph: nx.Graph, face_degree: int, pbar: bool) -> List[List[int]]:
     """Compute the facial walks (of length `face_degree`) of a graph.
-    Filter out all the cycles under the surface (ones with all edges incident on more than 2 faces)."""
+    Filter out all the cycles under or above the surface (ones with all edges incident on more than 2 faces)."""
 
     all_cycles = triangles(graph) if face_degree == 3 else cycles(graph, length=face_degree)
     if pbar:
@@ -211,18 +211,18 @@ def surface_faces(graph: nx.Graph, face_degree: int, pbar: bool) -> List[List[in
 
     all_cycles = list(all_cycles)
 
-    faces_on_edge = SimplexMap(key_dimension=1, map_constructor=lambda: defaultdict(list))
+    cycles_on_edge = SimplexMap(key_dimension=1, map_constructor=lambda: defaultdict(list))
     for cycle in all_cycles:
         for edge in zip(cycle, cycle[1:] + cycle[:1]):
-            faces_on_edge[edge].append(cycle)
+            cycles_on_edge[edge].append(cycle)
 
     surface = []
     boundary_size = 0
 
     for cycle in all_cycles:
         edges = list(zip(cycle, cycle[1:] + cycle[:1]))
-        nonmanifold_edges = list(filter(lambda e: len(faces_on_edge[e]) > 2, edges))
-        boundary_edges = list(filter(lambda e: len(faces_on_edge[e]) == 1, edges))
+        nonmanifold_edges = list(filter(lambda e: len(cycles_on_edge[e]) > 2, edges))
+        boundary_edges = list(filter(lambda e: len(cycles_on_edge[e]) == 1, edges))
         boundary_size += len(boundary_edges)
         internal_edges = len(cycle) - len(boundary_edges)
 
@@ -236,7 +236,7 @@ def surface_faces(graph: nx.Graph, face_degree: int, pbar: bool) -> List[List[in
             # this case impossible if we computed the SimplexMap correctly (?)
             print(f"WARNING: face {cycle} has {internal_edges} internal and {n_nonmf} non-manifold edges")
 
-    print(f"removed {len(all_cycles) - len(surface)} interior faces")
+    print(f"removed {len(all_cycles) - len(surface)} non-surface faces") # TODO: verbose flag check
     print(f"found {boundary_size} boundary edges")
     return surface            
     

@@ -111,7 +111,7 @@ class AtlasCompressedGraph:
         if self.full_size is None: # deserialized
             return f"AtlasCompressed({self.residual.name})"
         else:
-            return f"AtlasCompressed({self.residual.name}, eff={self.relative_efficiency:.3f})"
+            return f"AtlasCompressed({self.residual.name}, eff={self.relative_efficiency:.5f})"
 
     def compress(self, subgraph: nx.Graph, graphlet: AtlasGraphlet, mapped_nodes: List[int]):
         """replace the subgraph with a compact representation"""
@@ -221,20 +221,43 @@ class AtlasCompressedGraph:
         return acg, nbytes
         
 
+def relative_efficiency(G: nx.Graph) -> float:
+    """assumes equal representation size for graphlet index and vertex index"""
+    m = G.number_of_edges()
+    if m == 0:
+        return 0 # we're only interested in graphs with strictly positive efficiency anyway
+    n = G.number_of_nodes()
+    return 1 - (1 + n) / (2 * m)
 
-def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=True, print_stats=False) -> AtlasCompressedGraph:
-    # adapted version of [ČM21] algorithm 1
+
+# adapted version of [ČM21] algorithm 1
+def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=True, use_disconnected=False, print_stats=False) -> AtlasCompressedGraph:
+    """
+    compress a graph using the graph atlas
+    ### Arguments
+    - G: the graph to compress (will not be modified)
+    - max_graphlet_sz: maximum size of graphlets to consider
+    - sort_by_efficiency: whether to prioritize more efficient graphlets
+    - use_disconnected: whether to consider disconnected graphlets (will take more time, slightly better compression)
+    - print_stats: whether to print the number of occurrences of each graphlet
+    """
+    # TODO: option to halt at given efficiency threshold
     if max_graphlet_sz > 7:
         raise NotImplementedError("only graphlets up to size 7 are supported")
+    graphlet_stats = Counter()
 
     graphlet_atlas = nx.graph_atlas_g()
     Gcomp = AtlasCompressedGraph(G, take_ownership=False, atlas=graphlet_atlas)
-    graphlets = load_atlas_efficiency(n_max=max_graphlet_sz)
+
+    if use_disconnected:
+        all_graphlets = (AtlasGraphlet(idx, relative_efficiency(G)) for
+                          idx, G in enumerate(graphlet_atlas) if G.number_of_nodes() <= max_graphlet_sz)
+        graphlets = [g for g in all_graphlets if g.efficiency > 0] # OPT: cache which ones have positive efficiency   
+    else:
+        graphlets = load_atlas_efficiency(n_max=max_graphlet_sz)
+    
     if sort_by_efficiency: 
         graphlets.sort(key=lambda g: g.efficiency, reverse=True) # OPT: just have the cache sorted by efficiency
-    # TODO: option to halt at given efficiency threshold
-
-    graphlet_stats = Counter()
 
     for graphlet_id in tqdm(graphlets, desc="looping over graphlets", ncols=100):
         graphlet = graphlet_atlas[graphlet_id.index]
