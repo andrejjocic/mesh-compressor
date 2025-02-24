@@ -258,6 +258,7 @@ def compress_subgraphlets(G: nx.Graph, max_graphlet_sz=7, sort_by_efficiency=Tru
     
     if sort_by_efficiency: 
         graphlets.sort(key=lambda g: g.efficiency, reverse=True) # OPT: just have the cache sorted by efficiency
+        # TODO: try absolute efficiency (should be better??)
 
     for graphlet_id in tqdm(graphlets, desc="looping over graphlets", ncols=100):
         graphlet = graphlet_atlas[graphlet_id.index]

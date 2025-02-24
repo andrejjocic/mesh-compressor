@@ -28,19 +28,16 @@ def print_plyfiles(folder: str):
             continue
 
 
+def relative_conn_size(conn_size_bytes: int, n_verts: int, n_faces: int) -> tuple[float, float]:
+    """return (bpv, bpf)"""
+    size_bits = conn_size_bytes * 8
+    bpv = size_bits / n_verts
+    bpf = size_bits / n_faces
+    return bpv, bpf
 
 
 
-if __name__ == '__main__':
-    # print_plyfiles('data/MeshLab_sample_meshes')
-
-    # graph, _ = skeleton(PlyData.read(r"data\MeshLab_sample_meshes\T.ply"))
-    # print(graph)
-    # for caching_mode in [CachingMode.STATIC, CachingMode.DYNAMIC]:
-    #     print(f"compressing with caching mode {caching_mode}")
-    #     C = compress_bipartite(graph, caching_mode)
-    #     print(C)
-
+def something():
     # bunny stats for nmax = 3, 4, 5
     stats = {
         "1k": {
@@ -89,3 +86,18 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
+
+
+if __name__ == '__main__':
+    # print_plyfiles('data/MeshLab_sample_meshes')
+
+    # graph, _ = skeleton(PlyData.read(r"data\MeshLab_sample_meshes\T.ply"))
+    # print(graph)
+    # for caching_mode in [CachingMode.STATIC, CachingMode.DYNAMIC]:
+    #     print(f"compressing with caching mode {caching_mode}")
+    #     C = compress_bipartite(graph, caching_mode)
+    #     print(C)
+
+    bpv, bpf = relative_conn_size(1_022, n_verts=432, n_faces=755)
+    print("bits per vertex:", bpv)
+    print("bits per triangle:", bpf)

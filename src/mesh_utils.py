@@ -1,4 +1,4 @@
-from typing import List, Tuple, Set, Dict, Optional, TypeAlias, Iterator
+from typing import List, Tuple, Set, Dict, Optional, TypeAlias, Iterator, Any
 from collections import defaultdict, Counter
 import numpy as np
 from tqdm import tqdm
@@ -184,7 +184,7 @@ def cycles(graph: nx.Graph, length: int, ensure_chordless: bool) -> Iterator[Lis
             yield cycle    
 
 
-def triangles(graph: nx.Graph) -> Iterator[List[int]]:
+def triangles(graph: nx.Graph) -> Iterator[List[Any]]:
     """Generate all unique triangles in a graph."""
     G = nx.convert_node_labels_to_integers(graph, first_label=0, label_attribute="old_label")
     n = G.number_of_nodes()

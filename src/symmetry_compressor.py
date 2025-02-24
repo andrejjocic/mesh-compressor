@@ -1,5 +1,5 @@
 import networkx as nx
-from typing import List, Tuple, TypeAlias, Set, Dict, Optional, Any
+from typing import List, Tuple, TypeAlias, Set, Dict, Optional, Any, Iterator
 from dataclasses import dataclass, field
 import matplotlib.pyplot as plt
 import functools
@@ -10,6 +10,10 @@ from enum import Enum, auto
 from collections import defaultdict
 from tqdm import tqdm
 import struct
+from sympy.combinatorics import Permutation
+from sympy.combinatorics.generators import symmetric
+import networkx.algorithms.isomorphism as iso
+
 
 Edge: TypeAlias = Tuple[int, int]
 Cycle: TypeAlias = List[int]
@@ -22,19 +26,42 @@ def eq_edges(e1: Edge, e2: Edge) -> bool:
 
 @dataclass
 class VertexPermutation:
-    """graph vertex permutation, in cycle notation"""
+    """graph vertex permutation, in cycle notation (fixed points are not stored)"""
+    # FIXME: how do you infer range if fixed point not stored? (we can live without range error checking)
 
-    cycles: List[Cycle] # TODO: refactor to use sympy.combinatorics.Permutation
+    cycles: List[Cycle]
+
+    def __post_init__(self):
+        self.assert_valid()
+
+    @property
+    def nontrivial_cycles(self) -> int:
+        """number of non-singleton cycles"""    
+        return len(self.cycles)
+
+
+    def __repr__(self) -> str:
+        return f"VxPerm({self.cycles})"
+
+    def __call__(self, x) -> int:
+        if isinstance(x, int):
+            return self.apply(x)
+        elif isinstance(x, Edge):
+            return self.apply_edge(x)
+        else:
+            raise TypeError(f"can't apply VertexPermutation to type {type(x)}")
 
     def apply(self, v: int) -> int:
         # OPT: optimize this if needed for compression (likely won't bother benchmarking decompression)
         # (simple vertex-to-vertex mapping; make sure you update it if cycles are added!)
         for cycle in self.cycles:
-            if v in cycle:
+            try:
                 i = cycle.index(v)
                 return cycle[(i + 1) % len(cycle)]
-        
-        return v # fixed points are not stored
+            except ValueError:
+                pass # not in this cycle
+            
+        return v # fixed point
     
     def cycle_index(self, v: int) -> Optional[int]:
         for i, cycle in enumerate(self.cycles):
@@ -43,7 +70,6 @@ class VertexPermutation:
         return None
     
     def apply_edge(self, e: Edge) -> Edge:
-        # The permutation can be ‘applied’ to any list-like object, not only Permutations:
         u, v = e
         # if (ui := self.cycle_index(u)) is not None and ui == self.cycle_index(v):
         #     raise Exception(f"edge {e} vertices on the same cycle")
@@ -56,10 +82,41 @@ class VertexPermutation:
         return sum(len(c) - 1 for c in self.cycles)
     
     def assert_valid(self) -> None:
-        """make sure the cycles are disjoint"""
+        """make sure the cycles are disjoint and there are no singleons"""
+
+        if any(len(c) < 2 for c in self.cycles):
+            raise ValueError("can't have singletons in a permutation")
+
         all_vertices = set(itertools.chain.from_iterable(self.cycles))
-        assert len(all_vertices) == sum(map(len, self.cycles)), "cycles are not disjoint"
+        if len(all_vertices) != sum(map(len, self.cycles)):
+            raise ValueError("cycles are not disjoint")
     
+
+@dataclass
+class SymmetryCompressedGraph:
+    residual: nx.Graph
+    symmetry: VertexPermutation
+
+    def decompress(self, desctructive=False) -> nx.Graph:
+        G = self.residual.copy() if not desctructive else self.residual
+        for e in self.residual.edges:
+            e_perm = e
+            while True:
+                e_perm = self.symmetry(e_perm)
+                if eq_edges(e_perm, e):
+                    break
+                G.add_edge(*e_perm)
+
+        return G
+
+    def remapped_nodes(self, node_mapping: Dict[int, int]) -> "SymmetryCompressedGraph":
+        """return version of self with the node labels changed according to mapping"""
+
+        new_resid = nx.relabel_nodes(self.residual, node_mapping, copy=True)
+        new_perm = VertexPermutation(cycles=[[node_mapping[v] for v in cycle] for cycle in self.symmetry.cycles])
+        return SymmetryCompressedGraph(new_resid, new_perm)
+    
+
 
 def decompress_SC(G_residual: nx.Graph, perm: VertexPermutation) -> nx.Graph:
     """decompress a symmetry-compressed graph"""
@@ -78,6 +135,171 @@ def decompress_SC(G_residual: nx.Graph, perm: VertexPermutation) -> nx.Graph:
             G.add_edge(*e_perm)#; print(f"added edge {e_perm}")
 
     return G
+
+
+# have to force consistency between encoder and decoder, in case we use different machines (?)
+NUMBER_FMT = "<I" # little-endian unsigned int (4 bytes)
+SIZEOF_NUM = 4 # bytes
+
+
+class PermutationEncoding(Enum):
+    """different ways to encode a permutation"""
+    CYCLES = auto()
+    """cycle notation, each (non-trivial) cycle prefixed with its length"""
+    PAIRS = auto()
+    """pairs of consecutive vertices in cycles
+    (no separator needed for decoding, just see when adjacent pairs have no common vertex)"""
+
+    def num_integers_for(self, perm: VertexPermutation):
+        """integers in the range [0, n) for a permutation of size n, so they take roughly same space"""
+        match self:
+            case PermutationEncoding.CYCLES:
+                return 1 + perm.nontrivial_cycles + sum(len(cycle) for cycle in perm.cycles)
+            case PermutationEncoding.PAIRS:
+                # NOTE: don't you need *number* of pairs in the binary too?
+                return 2 * sum(len(cycle) - 1 for cycle in perm.cycles)
+
+    # def serialize_to(self, file, perm: Permutation) -> None:
+    #     match self:
+    #         case PermutationEncoding.CYCLES:
+    #             file.write(struct.pack(NUMBER_FMT, perm.cycles)) # can't infer this if we're skipping singletons (??)
+    #             for cycle in perm.cyclic_form:
+    #                 file.write(struct.pack(NUMBER_FMT, len(cycle)))
+    #                 file.write(struct.pack(NUMBER_FMT, *cycle))
+    #         case PermutationEncoding.PAIRS:
+    #             raise NotImplementedError("not implemented yet")
+
+    
+    # def deserialize_from(self, file) -> Permutation:
+    #     match self:
+    #         case PermutationEncoding.CYCLES:
+    #             n_cycles = struct.unpack(NUMBER_FMT, file.read(SIZEOF_NUM))[0]
+    #         case PermutationEncoding.PAIRS:
+    #             raise NotImplementedError("not implemented yet")
+
+
+def relative_efficiency(sc_graph: SymmetryCompressedGraph, original: nx.Graph, perm_encoding: PermutationEncoding) -> float:
+    full_size = 2 * original.number_of_edges()
+    zipped_size = 2 * sc_graph.residual.number_of_edges() + perm_encoding.num_integers_for(sc_graph.symmetry)
+
+    return (full_size - zipped_size) / full_size
+ 
+
+def residual_graph(G: nx.Graph, perm: Permutation) -> Optional[nx.Graph]:
+    """Return the residual of G under given vertex symmetry.
+    If the given permutation is not a symmetry of G, return None."""
+    if set(G.nodes) != set(range(G.number_of_nodes())):
+        raise ValueError("graph must have 0-based consecutive integer labels") # otherwise Sympy.Permutation is a pain to use
+
+    G = G.copy()
+    repr_edges = []
+
+    while G.number_of_edges() > 0:
+        repr_edge = next(iter(G.edges))
+        repr_edges.append(repr_edge)
+        G.remove_edge(*repr_edge)
+
+        e = repr_edge
+        while True:
+            e = e[0]^perm, e[1]^perm
+            if eq_edges(e, repr_edge):
+                break # cycle closed
+            
+            if G.has_edge(*e):
+                G.remove_edge(*e)
+            else:
+                return None # perm is not a symmetry of G
+
+    return nx.Graph(repr_edges)
+
+
+from sympy.combinatorics.generators import symmetric
+
+def effective_SC_encodings(G: nx.Graph, perm_encoding_strategy: PermutationEncoding) -> Iterator[Tuple[SymmetryCompressedGraph, int]]:
+    """yields all SC encodings of G and their absolute efficiency (in num. of integers), when it is positive"""
+    if set(G.nodes) != set(range(G.number_of_nodes())):
+        raise NotImplementedError("TODO: map to 0-based for searching, then map back")
+    
+    for p in symmetric(G.number_of_nodes()): # just try every permutation (could probably do better)
+        if (resid := residual_graph(G, p)) is None: continue
+        
+        p_size = perm_encoding_strategy.num_integers_for(vtx_p := VertexPermutation(p.cyclic_form))
+        if (abs_eff := 2 * G.number_of_edges() - (p_size + 2 * resid.number_of_edges())) > 0:
+            yield SymmetryCompressedGraph(resid, vtx_p), abs_eff
+
+
+def best_SC_encoding(G: nx.Graph, perm_encoding_strategy: PermutationEncoding) -> Optional[Tuple[SymmetryCompressedGraph, int]]:
+    """return the best SC encoding of G and its absolute efficiency (in num. of integers), if G is compressible"""
+    best_eff = 0
+    best_enc = None
+
+    for enc, eff in effective_SC_encodings(G, perm_encoding_strategy):
+        if eff > best_eff:
+            best_eff = eff
+            best_enc = enc
+
+    if best_enc is None:
+        return None
+    else:
+        return best_enc, best_eff
+
+
+
+
+class SymmetryCompressedPartition:
+    """partition of G into its symmetry-compressed subgraphs, + the rest of G"""
+
+    residual: nx.Graph
+    """the uncompressed edges of the graph"""
+    full_size: int
+    """size of the full graph, as number of vertex indices"""
+    compressed_graphlets: List[SymmetryCompressedGraph]
+    """compressed subgraphs, as a list of graphlet IDs and node mappings"""
+    perm_encoding: PermutationEncoding
+    """how the permutations are encoded in they resulting binary"""
+
+    def __init__(self, G: nx.Graph, take_ownership=False, perm_encoding=PermutationEncoding.PAIRS):
+        self.residual = G if take_ownership else G.copy()
+        self.full_size = 2 * G.number_of_edges()
+        self.compressed_graphlets: List[SymmetryCompressedGraph] = []
+        self.perm_encoding = perm_encoding
+
+    def compress(self, subgraph: nx.Graph, compressed_template: SymmetryCompressedGraph, node_mapping: Dict[int, int]) -> None:
+        """replace the subgraph with symmetry-compressed encodin
+        - subgraph: the part of the graph to be replaced
+        - compressed_template: SC representation of `subgraph`, but with incorrect vertex labels
+        - node_mapping: map from template vertices to the vertices of the subgraph
+        """
+        self.residual.remove_edges_from(subgraph.edges)
+        self.compressed_graphlets.append(compressed_template.remapped_nodes(node_mapping))
+
+
+def graphlet_compress(G: nx.Graph, max_graphlet_sz=7) -> SymmetryCompressedPartition:
+    """ [ČM21] algorithm 1
+
+    Compress a graph using SC graphlets up to a specified size."""
+
+    graphlets = load_SC_graphlets(n_max=max_graphlet_sz)
+
+    # TODO: sort by ABSOLUTE efficiency
+
+    Gcomp = SymmetryCompressedPartition(G)
+
+    for sc_graphlet in graphlets:
+        graphlet = sc_graphlet.decompress() # bending over backwards to avoid using a graphlet atlas
+        matcher = iso.GraphMatcher(Gcomp.residual, G2=graphlet, node_match=None, edge_match=None) # node and edge attributes are ignored
+
+        for isomorphism in matcher.subgraph_isomorphisms_iter():
+            # for subgraph on {0,1,2,3}, an isomorphism looks something like {4: 0, 13: 1, 2: 2, 44: 3}
+            inv_iso = {v: k for k, v in isomorphism.items()}
+            subgraph = nx.relabel_nodes(graphlet, mapping=inv_iso, copy=True)
+            if any(not Gcomp.residual.has_edge(*edge) for edge in subgraph.edges):
+                continue # a part of this subgraph has already been compressed (with the same graphlet)
+                # can this even happen, or does isomorphism iterator adapt?
+            
+            Gcomp.compress(subgraph, sc_graphlet, inv_iso)
+
+    return Gcomp
 
 
 @dataclass
@@ -193,8 +415,7 @@ class NSCompressedPartition:
                     file.write(struct.pack("II", u, v))
 
 
-
-def rel_efficiency(g: int, u: int, v: int) -> float:
+def bipart_rel_efficiency(g: int, u: int, v: int) -> float:
     e = (2*g - v - u + 1 - u*v) / g # OPT: don't bohther with +1 if just optimizing this
     assert e <= 1
     return e
@@ -216,7 +437,7 @@ def extract_bipart(G: nx.Graph, v0: int) -> Tuple[float, nx.Graph, Set[Edge], Se
     Guv.remove_edges_from((v1, v2) for v1, v2 in itertools.combinations(V, 2) if G.has_edge(v1, v2))
     assert nx.is_bipartite(Guv); assert Guv.number_of_edges() <= len(U) * len(V)
     
-    max_eff = rel_efficiency(Guv.number_of_edges(), len(U), len(V))
+    max_eff = bipart_rel_efficiency(Guv.number_of_edges(), len(U), len(V))
     improving = True
 
     def greedy_optimize(A: Set[int], B: Set[int]) -> None:
@@ -227,7 +448,7 @@ def extract_bipart(G: nx.Graph, v0: int) -> Tuple[float, nx.Graph, Set[Edge], Se
             edges_left = Guv.number_of_edges() - len(Na)
             now_isolated = [b for b in Na if Guv.degree[b] == 1] ;assert len(now_isolated) < len(B)
 
-            if (eff := rel_efficiency(edges_left, len(A) - 1, len(B) - len(now_isolated))) > max_eff:
+            if (eff := bipart_rel_efficiency(edges_left, len(A) - 1, len(B) - len(now_isolated))) > max_eff:
                 Guv.remove_node(a)
                 Guv.remove_edges_from((a, b) for b in now_isolated) ;assert Guv.number_of_edges() == edges_left
                 # should we also remove the isolated vertices from Guv?
@@ -354,12 +575,45 @@ def edge_intersect(G1: nx.Graph, G2: nx.Graph) -> bool:
 
 if __name__ == "__main__":
     # graph = net.read_pajek("karate_club", data_folder="data\\networks")
-    graph = nx.erdos_renyi_graph(n=50, p=0.9)
-    print(graph)
-    for caching_mode in [CachingMode.STATIC, CachingMode.DYNAMIC]:
-        print(f"compressing with caching mode {caching_mode}")
-        C = compress_bipartite(graph, caching_mode)
-        print(C)
-        # print("decompressing...")
-        # print(C.decompress())
-        # print()
+    # graph = nx.erdos_renyi_graph(n=50, p=0.9)
+
+    # print(list(effective_SC_encodings(nx.cycle_graph(4), PermutationEncoding.PAIRS))); quit()
+    atlas = nx.graph_atlas_g()
+    len2rel_effs = defaultdict(list)
+
+    fig, ax = plt.subplots(nrows=2)
+    plt.ion()  # Turn on interactive mode
+
+    for g in tqdm(atlas[1:]):
+        if g.number_of_nodes() > 5: break
+
+        if nx.is_connected(g):
+            if (enc := best_SC_encoding(g, PermutationEncoding.PAIRS)) is not None:
+                scg, abs_eff = enc
+                len2rel_effs[g.number_of_nodes()].append(rel_eff := abs_eff / (2 * g.number_of_edges()))
+
+                # Clear previous plots
+                ax[0].clear()
+                ax[1].clear()
+
+                # Create new plots
+                ax[0].set_title(f"graphlet {g}")
+                nx.draw(g, ax=ax[0], with_labels=True)
+
+                ax[1].set_title(f"abs={abs_eff}, rel={rel_eff:.3f} with {scg.symmetry}")
+                nx.draw(scg.residual, ax=ax[1],     with_labels=True)
+
+                plt.draw()
+                plt.pause(0.1)  # Small pause to ensure plot updates
+                
+                # Wait for key press to continue
+                input("Press Enter to continue...")
+
+    plt.ioff()  # Turn off interactive mode
+    plt.close()
+
+    for n, effs in len2rel_effs.items():
+        print(f"graphs with {n} nodes: {len(effs)} graphs, avg eff = {sum(effs) / len(effs):.3f}, max eff = {max(effs):.3f}")
+
+    from pprint import pprint
+    pprint(len2rel_effs)
