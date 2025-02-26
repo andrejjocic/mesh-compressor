@@ -98,7 +98,13 @@ class TestSymmetryCompressor(unittest.TestCase):
         self.assertEqual(comp.decompress().number_of_edges(), 14)
     
 
-    def test_karate(self):
+    def test_karate_graphlets(self):
+        karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
+        comp = graphlet_compress(karate, symmetry_encoding=PermutationEncoding.PAIRS, max_graphlet_sz=5) # paper shows 5 is max pattern
+        karate_dec = comp.decompress()
+        self.assertEqualGraphs(karate, karate_dec)
+
+    def test_karate_bipart(self):
         karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
         assert len(next(iter(karate.edges))) == 2 # edge labels may break something
         C = compress_bipartite(karate, caching_mode=CachingMode.NONE)
