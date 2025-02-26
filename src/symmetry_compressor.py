@@ -402,7 +402,7 @@ class SymmetryCompressedPartition:
                 g.serialize_to(file, self.perm_encoding)
 
     @staticmethod
-    def deserialize_from(filename: str, perm_encoding: PermutationEncoding) -> "SymmetryCompressedPartition":
+    def deserialize_from(filename: str, perm_encoding: PermutationEncoding) -> Tuple["SymmetryCompressedPartition", int]:
         residual = nx.Graph()
         SC_graphlets = []
 
@@ -415,7 +415,9 @@ class SymmetryCompressedPartition:
             for _ in range(n_graphlets):
                 SC_graphlets.append(SymmetryCompressedGraph.deserialize_from(file, perm_encoding))
 
-        return SymmetryCompressedPartition(residual, None, SC_graphlets, perm_encoding)
+            nbytes = file.tell()
+
+        return SymmetryCompressedPartition(residual, None, SC_graphlets, perm_encoding), nbytes
 
 
 

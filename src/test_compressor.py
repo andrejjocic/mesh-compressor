@@ -108,7 +108,7 @@ class TestSymmetryCompressor(unittest.TestCase):
         C = graphlet_compress(G, symmetry_encoding=PermutationEncoding.CYCLES, **compressor_kwargs)
         bin_path = Path("test.bin") # compressed graph file
         C.serialize_to(bin_path)
-        C2 = SymmetryCompressedPartition.deserialize_from(bin_path, PermutationEncoding.CYCLES)
+        C2, _ = SymmetryCompressedPartition.deserialize_from(bin_path, PermutationEncoding.CYCLES)
         bin_path.unlink()
         G2 = C2.decompress()
         self.assertEqualGraphs(G, G2)

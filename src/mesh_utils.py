@@ -93,7 +93,7 @@ def assertEqualGraphs(g1: nx.Graph, g2: nx.Graph):
     assert set(g1.edges) == set(g2.edges)
 
 
-def compress_ply(input_file: str, encode_holes=True, verbose=False, **compressor_kwargs):
+def compress_ply(input_file: str, atlas: bool, encode_holes=True, verbose=False, **compressor_kwargs):
     """Compress a PLY file's connectivity data using graphlet atlas compression."""
     in_file = Path(input_file)
     if not in_file.exists():
@@ -102,7 +102,7 @@ def compress_ply(input_file: str, encode_holes=True, verbose=False, **compressor
     orig_size = in_file.stat().st_size
     if verbose: print(f"original size: {orig_size} bytes")
 
-    out_folder = in_file.parent / f"{in_file.stem}_AtlasCompressed"
+    out_folder = in_file.parent / f"{in_file.stem}_{'Atlas' if atlas else 'Symmetry'}Compressed"
     out_folder.mkdir(exist_ok=True)
     plydata = PlyData.read(input_file)
     if (elem_names := set(el.name for el in plydata.elements)) != {"vertex", "face"}:
@@ -128,12 +128,17 @@ def compress_ply(input_file: str, encode_holes=True, verbose=False, **compressor
     if verbose: print(f"vertices size: {vtxdata_sz} bytes")
 
     # compress the connectivity data
-    wf_comp = graphlets.compress_subgraphlets(wireframe, **compressor_kwargs)
-    print(f"wireframe compressed to {wf_comp}")
-
-    # serialize compressed graph
     conn_path = out_folder / f"{in_file.stem}_{face_degree}-gons.acgf"
-    wf_comp.serialize(conn_path)
+
+    if atlas:
+        wf_comp = graphlets.compress_subgraphlets(wireframe, **compressor_kwargs)
+        wf_comp.serialize(conn_path)
+    else:
+        wf_comp = symm.graphlet_compress(wireframe, symmetry_encoding=symm.PermutationEncoding.CYCLES, **compressor_kwargs)
+        # TODO: support other symmetry encodings
+        wf_comp.serialize_to(conn_path)
+
+    print(f"wireframe compressed to {wf_comp}")
 
     if encode_holes:
         if verbose: print("checking for holes in the mesh...")
@@ -241,7 +246,7 @@ def surface_faces(graph: nx.Graph, face_degree: int, pbar: bool) -> List[List[in
     return surface            
     
 
-def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True, flip_faces=False) -> PlyData:
+def decompress_ply(folder: str, out_name: str, atlas: bool, pbar=False, set_orientation=True, flip_faces=False) -> PlyData:
     """Decompress a PLY file's connectivity data using graphlet atlas compression.
     ### Parameters:
     - folder: path to the folder containing the compressed data
@@ -260,7 +265,12 @@ def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True,
     plydata = PlyData.read(vtx_path)
 
     # load compressed wireframe
-    wf_comp, bytes_read = graphlets.AtlasCompressedGraph.deserialize(conn_path)
+    if atlas:
+        wf_comp, bytes_read = graphlets.AtlasCompressedGraph.deserialize(conn_path)
+    else:
+        wf_comp, bytes_read = symm.SymmetryCompressedPartition.deserialize_from(
+            conn_path, perm_encoding=symm.PermutationEncoding.CYCLES)
+        # TODO: support other symmetry encodings (must be consistent with compression)
 
     if (mtch := re.match(r".*_(\d+)-gons", conn_path.stem)) is not None:
         face_degree = int(mtch.group(1))
@@ -283,7 +293,11 @@ def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True,
     else:
         holes = None
 
-    wireframe = wf_comp.decompress(in_place=True)
+    if atlas:
+        wireframe = wf_comp.decompress(in_place=True) # wf_comp itself is not used anymore
+    else:
+        wireframe = wf_comp.decompress(destructive=False) # OPT: allow destructive
+    
     faces = surface_faces(wireframe, face_degree, pbar)
 
     # remove holes from faces (NOTE: should we do this before or after setting orientation?)
@@ -315,7 +329,9 @@ def decompress_ply(folder: str, out_name: str, pbar=False, set_orientation=True,
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="(de-)compress PLY files using graphlet atlas compression.")
+    parser = argparse.ArgumentParser(description="(de-)compress PLY files using graphlet-based compression.")
+    parser.add_argument("--symmetry", action="store_true",
+                        help="Use symmetry-coding of graphlets (instead of atlas). WARNING: make sure to use the same option when unzipping!")
     parser.add_argument("--time", action="store_true", help="Print execution time.")
     subparsers = parser.add_subparsers(dest="command")
     
@@ -325,24 +341,25 @@ if __name__ == "__main__":
     zip_parser.add_argument("--verbose", action="store_true", help="Print more compression statistics.")
     zip_parser.add_argument("--preserve_holes", action="store_true",
                             help="Check for single-face holes in the mesh so they may be preserved (may take a few extra seconds).")
-    # TODO: output path option
+    zip_parser.add_argument("--output_folder", type=str, help="Name of the output folder.")
 
     unzip_parser = subparsers.add_parser("unzip", help="Decompress a PLY file.")
     unzip_parser.add_argument("folder", type=str, help="Path to the folder containing the compressed data.")
     unzip_parser.add_argument("--output_file", type=str, default="decompressed", help="Name of the output PLY file.")
-    unzip_parser.add_argument("--pbar", action="store_true", help="Show (rough) progress bar for face enumeraton.")
+    unzip_parser.add_argument("--pbar", action="store_true", help="Show (rough) progress bar for face enumeration.")
     unzip_parser.add_argument("--no_orientation", action="store_false", help="Don't set face orientation.")
     unzip_parser.add_argument("--flip_orientation", action="store_true",
                               help="Flip the orientation of all faces, w.r.t. the (arbitrary) default orientation.")
     
     args = parser.parse_args()
     t0 = time()
+    # TODO: use output path option
     if args.command == "zip":    
-        compress_ply(args.input_file, max_graphlet_sz=args.max_graphlet, encode_holes=args.preserve_holes,
-                     verbose=args.verbose, print_stats=args.verbose)
+        compress_ply(args.input_file, atlas=not args.symmetry,
+                     max_graphlet_sz=args.max_graphlet, encode_holes=args.preserve_holes, verbose=args.verbose)
     elif args.command == "unzip":
-        decompress_ply(args.folder, out_name=args.output_file, pbar=args.pbar,
-                       set_orientation=args.no_orientation, flip_faces=args.flip_orientation)
+        decompress_ply(args.folder, out_name=args.output_file, atlas=not args.symmetry,
+                       pbar=args.pbar, set_orientation=args.no_orientation, flip_faces=args.flip_orientation)
 
     if args.time:
         print(f"Execution time: {time() - t0:.6f} seconds")
