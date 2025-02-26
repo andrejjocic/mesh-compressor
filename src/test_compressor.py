@@ -57,13 +57,14 @@ class TestAtlasCompressor(unittest.TestCase):
 
 class TestSymmetryCompressor(unittest.TestCase):
 
-    def assertEqualGraphs(self, g1: nx.Graph, g2: nx.Graph):
+    def assertEqualGraphs(self, g1: nx.Graph, g2: nx.Graph): 
         self.assertEqual(g1.number_of_nodes(), g2.number_of_nodes())
         self.assertEqual(g1.number_of_edges(), g2.number_of_edges())
         # no need to complicate with isomorphism test, decompressed graph
         # should have the same nodes and edges (provided no isolated nodes?)
         self.assertCountEqual(g1.nodes, g2.nodes)
-        self.assertCountEqual(g1.edges, g2.edges)
+        self.assertCountEqual(map(sorted, g1.edges), map(sorted, g2.edges)) # disregard edge order (undirected)
+
 
     def test_decomp_4cycle(self):
         # [ČM21] table 1
@@ -96,13 +97,26 @@ class TestSymmetryCompressor(unittest.TestCase):
         )
         self.assertEqual(comp.size, 2 + 9 + 1)
         self.assertEqual(comp.decompress().number_of_edges(), 14)
-    
 
-    def test_karate_graphlets(self):
-        karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
-        comp = graphlet_compress(karate, symmetry_encoding=PermutationEncoding.PAIRS, max_graphlet_sz=5) # paper shows 5 is max pattern
-        karate_dec = comp.decompress()
-        self.assertEqualGraphs(karate, karate_dec)
+    # def test_karate_graphlets(self):
+    #     karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))
+    #     comp = graphlet_compress(karate, symmetry_encoding=PermutationEncoding.PAIRS, max_graphlet_sz=5) # paper shows 5 is max pattern
+    #     karate_dec = comp.decompress()
+    #     self.assertEqualGraphs(karate, karate_dec)
+
+    def validate_serialization(self, G: nx.Graph, **compressor_kwargs):
+        C = graphlet_compress(G, symmetry_encoding=PermutationEncoding.CYCLES, **compressor_kwargs)
+        bin_path = Path("test.bin") # compressed graph file
+        C.serialize_to(bin_path)
+        C2 = SymmetryCompressedPartition.deserialize_from(bin_path, PermutationEncoding.CYCLES)
+        bin_path.unlink()
+        G2 = C2.decompress()
+        self.assertEqualGraphs(G, G2)
+
+    def test_serialization_karate(self):
+        karate = nx.Graph(net.read_pajek("karate_club", data_folder="..\\data\\networks"))
+        assert len(next(iter(karate.edges))) == 2 # edge labels may break something``
+        self.validate_serialization(karate, progress_bar=False, cache_folder="..\\symmetry_cache")
 
     def test_karate_bipart(self):
         karate = nx.Graph(net.read_pajek("karate_club", data_folder="data\\networks"))

@@ -96,14 +96,15 @@ class VertexPermutation:
 
 
 # have to force consistency between encoder and decoder, in case we use different machines (?)
-NUMBER_FMT = "<I" # little-endian unsigned int (4 bytes)
 SIZEOF_NUM = 4 # bytes
+NUMBER_FMT = "<I" # little-endian unsigned int (4 bytes)
+seq_fmt = lambda n: NUMBER_FMT[0] + n*NUMBER_FMT[1] # sequence of n numbers
 
 class PermutationEncoding(Enum):
     """different ways to encode a permutation"""
     CYCLES = auto()
     """cycle notation, each (non-trivial) cycle prefixed with its length"""
-    PAIRS = auto()
+    PAIRS = auto() # NOTE: has better mean absolute efficiency across SC graphlets n=4..7; but may perform worse
     """pairs of consecutive vertices in cycles
     (no separator needed for decoding, just see when adjacent pairs have no common vertex)"""
 
@@ -126,7 +127,7 @@ class PermutationEncoding(Enum):
                 file.write(struct.pack(NUMBER_FMT, perm.nontrivial_cycles))
                 for cycle in perm.cycles:
                     file.write(struct.pack(NUMBER_FMT, len(cycle)))
-                    file.write(struct.pack(NUMBER_FMT, *cycle))
+                    file.write(struct.pack(seq_fmt(len(cycle)), *cycle))
             case PermutationEncoding.PAIRS:
                 raise NotImplementedError("not implemented yet")
     
@@ -137,7 +138,7 @@ class PermutationEncoding(Enum):
                 cycles = []
                 for _ in range(n_cycles):
                     cycle_length = struct.unpack(NUMBER_FMT, file.read(SIZEOF_NUM))[0]
-                    cycle = list(struct.unpack(NUMBER_FMT * cycle_length, file.read(SIZEOF_NUM * cycle_length)))
+                    cycle = list(struct.unpack(seq_fmt(cycle_length), file.read(SIZEOF_NUM * cycle_length)))
                     cycles.append(cycle)
                 return VertexPermutation(cycles)
             case PermutationEncoding.PAIRS:
@@ -186,9 +187,18 @@ class SymmetryCompressedGraph:
 
         file.write(struct.pack(NUMBER_FMT, self.residual.number_of_edges()))
         for u, v in self.residual.edges:
-            file.write(struct.pack(NUMBER_FMT, u, v))
+            file.write(struct.pack(seq_fmt(2), u, v))
 
         perm_encoding.serialize_to(file, self.symmetry)
+
+    @staticmethod
+    def deserialize_from(file, perm_encoding: PermutationEncoding) -> "SymmetryCompressedGraph":
+        resid = nx.Graph()
+        n_edges = struct.unpack(NUMBER_FMT, file.read(SIZEOF_NUM))[0]
+        for _ in range(n_edges):
+            resid.add_edge(*struct.unpack(seq_fmt(2), file.read(SIZEOF_NUM * 2)))
+
+        return SymmetryCompressedGraph(resid, perm_encoding.deserialize_from(file))
 
 
 def decompress_SC(G_residual: nx.Graph, perm: VertexPermutation) -> nx.Graph:
@@ -324,27 +334,34 @@ def load_SC_graphlets(n_max: int, perm_encoding: PermutationEncoding, folder="sy
     return res
         
 
-
+@dataclass
 class SymmetryCompressedPartition:
     """partition of G into its symmetry-compressed subgraphs, + the rest of G"""
 
     residual: nx.Graph
     """the uncompressed edges of the graph"""
-    full_size: int
+    full_size: Optional[int]
     """size of the full graph, as number of vertex indices"""
     compressed_graphlets: List[SymmetryCompressedGraph]
     """compressed subgraphs, as a list of graphlet IDs and node mappings"""
     perm_encoding: PermutationEncoding
     """how the permutations are encoded in the resulting binary"""
 
-    def __init__(self, G: nx.Graph, take_ownership=False, perm_encoding=PermutationEncoding.PAIRS): 
-        self.residual = G if take_ownership else G.copy()
-        self.full_size = 2 * G.number_of_edges()
-        self.compressed_graphlets: List[SymmetryCompressedGraph] = []
-        self.perm_encoding = perm_encoding
+    @staticmethod
+    def initialize_compression(G: nx.Graph, perm_encoding: PermutationEncoding, take_ownership=False) -> "SymmetryCompressedPartition":
+        return SymmetryCompressedPartition(
+            residual=G if take_ownership else G.copy(),
+            full_size=2 * G.number_of_edges(),
+            compressed_graphlets=[],
+            perm_encoding=perm_encoding
+        )
+
+    def __str__(self) -> str:
+        percent = round(100 * self.compression_ratio, 2) if self.full_size is not None else "?"
+        return f"SCPartition[{percent}%](res={self.residual.number_of_edges()}, comp={len(self.compressed_graphlets)}x{self.perm_encoding.name})"
 
     def compress_subgraph(self, subgraph: nx.Graph, compressed_template: SymmetryCompressedGraph, node_mapping: Dict[int, int]) -> None:
-        """replace the subgraph with symmetry-compressed encodin
+        """replace the subgraph with symmetry-compressed encoding
         - subgraph: the part of the graph to be replaced
         - compressed_template: SC representation of `subgraph`, but with incorrect vertex labels
         - node_mapping: map from template vertices to the vertices of the subgraph
@@ -352,31 +369,58 @@ class SymmetryCompressedPartition:
         self.residual.remove_edges_from(subgraph.edges)
         self.compressed_graphlets.append(compressed_template.remapped_nodes(node_mapping))
 
-    @property
-    def size(self) -> int:
-        """total size of the encoding, as number of integers"""
-        return 2 * self.residual.number_of_edges() + sum(scg.encoding_size(self.perm_encoding) for scg in self.compressed_graphlets)
-    
     def decompress(self, destructive=False) -> nx.Graph:
         G = self.residual.copy()
         for C in self.compressed_graphlets:
             G.add_edges_from(C.decompress(destructive).edges)
 
         return G
+
+    @property
+    def size(self) -> int:
+        """total size of the encoding, as number of integers"""
+        return 1 + 2 * self.residual.number_of_edges() + \
+               1 + sum(scg.encoding_size(self.perm_encoding) for scg in self.compressed_graphlets)
+
+    @property
+    def compression_ratio(self) -> float:
+        return self.size / self.full_size
+
+    @property
+    def relative_efficiency(self) -> float:
+        return (self.full_size - self.size) / self.full_size
+    
     
     def serialize_to(self, filename: str) -> None:
         with open(filename, "wb") as file:
             file.write(struct.pack(NUMBER_FMT, self.residual.number_of_edges()))
             for u, v in self.residual.edges:
-                file.write(struct.pack(NUMBER_FMT, u, v))
+                file.write(struct.pack(seq_fmt(2), u, v))
 
             file.write(struct.pack(NUMBER_FMT, len(self.compressed_graphlets)))
             for g in self.compressed_graphlets:
                 g.serialize_to(file, self.perm_encoding)
 
+    @staticmethod
+    def deserialize_from(filename: str, perm_encoding: PermutationEncoding) -> "SymmetryCompressedPartition":
+        residual = nx.Graph()
+        SC_graphlets = []
+
+        with open(filename, "rb") as file:
+            n_resid = struct.unpack(NUMBER_FMT, file.read(SIZEOF_NUM))[0]
+            for _ in range(n_resid):
+                residual.add_edge(*struct.unpack(seq_fmt(2), file.read(SIZEOF_NUM * 2)))
+
+            n_graphlets = struct.unpack(NUMBER_FMT, file.read(SIZEOF_NUM))[0]
+            for _ in range(n_graphlets):
+                SC_graphlets.append(SymmetryCompressedGraph.deserialize_from(file, perm_encoding))
+
+        return SymmetryCompressedPartition(residual, None, SC_graphlets, perm_encoding)
+
+
 
 def graphlet_compress(G: nx.Graph, symmetry_encoding: PermutationEncoding, max_graphlet_sz=7, sort_relative=False, 
-                      progress_bar=False) -> SymmetryCompressedPartition:
+                      progress_bar=False, cache_folder="symmetry_cache") -> SymmetryCompressedPartition:
     """ [ČM21] algorithm 1
 
     Compress a graph using SC graphlets up to a specified size.
@@ -384,19 +428,20 @@ def graphlet_compress(G: nx.Graph, symmetry_encoding: PermutationEncoding, max_g
     - max_graphlet_sz: the maximum size of graphlets to look for
     - sort_relative: if True, sort graphlets by relative efficiency (descending), otherwise absolute efficiency
     """
-    graphlets = load_SC_graphlets(n_max=max_graphlet_sz, perm_encoding=symmetry_encoding)
+    graphlets = load_SC_graphlets(n_max=max_graphlet_sz, perm_encoding=symmetry_encoding, folder=cache_folder)
+    # NOTE: we could load available cache for any permutation encoding and still get correct results, just maybe worse compression
 
     if sort_relative:
-        graphlets.sort(key=lambda scg: scg[0].relative_efficiency(PermutationEncoding.PAIRS), reverse=True)
+        graphlets.sort(key=lambda scg: scg[0].relative_efficiency(symmetry_encoding), reverse=True)
     else:
         graphlets.sort(key=lambda scg: scg[1], reverse=True)
 
-    Gcomp = SymmetryCompressedPartition(G)
-    if progress_bar:
-        graphlets = tqdm(graphlets, desc="loop over graphlets")
+    Gcomp = SymmetryCompressedPartition.initialize_compression(G, take_ownership=False, perm_encoding=symmetry_encoding)
+
+    if progress_bar: graphlets = tqdm(graphlets, desc="loop over graphlets")
 
     for sc_graphlet, _ in graphlets:
-        graphlet = sc_graphlet.decompress() # bending over backwards to avoid using a graphlet atlas
+        graphlet = sc_graphlet.decompress(destructive=False) # bending over backwards to avoid using a graphlet atlas
         matcher = iso.GraphMatcher(Gcomp.residual, G2=graphlet, node_match=None, edge_match=None) # node and edge attributes are ignored
 
         for isomorphism in matcher.subgraph_isomorphisms_iter():
@@ -725,19 +770,39 @@ def foo():
     from pprint import pprint
     pprint(len2rel_effs)
 
-if __name__ == "__main__":
-    for enc in PermutationEncoding:
-        print(f"loading SC graphlets with {enc.name} encoding")
-        graphlets = load_SC_graphlets(7, enc)
-        abs_effs = [scg[1] for scg in graphlets]
-        print(f"mean abs. efficiency: {sum(abs_effs) / len(abs_effs):.3f}, max: {max(abs_effs):.3f}")
 
-    quit()
+if __name__ == "__main__":
+    # for enc in PermutationEncoding:
+    #     print(f"loading SC graphlets with {enc.name} encoding")
+    #     graphlets = load_SC_graphlets(7, enc)
+    #     abs_effs = [scg[1] for scg in graphlets]
+    #     print(f"mean abs. efficiency: {sum(abs_effs) / len(abs_effs):.3f}, max: {max(abs_effs):.3f}")
+    #     plt.hist(abs_effs, bins=20)
+    #     plt.show()
 
     # build_graphlet_cache(5, PermutationEncoding.PAIRS)
-    graph = net.read_pajek("karate_club", data_folder="data\\networks")
+    network = net.read_pajek("karate_club", data_folder="data\\networks")
+    perm_encoding = PermutationEncoding.CYCLES
+
+    graph = nx.Graph()
+    for u, v, _ in network.edges:
+        graph.add_edge(u, v)
+    assert len(next(iter(graph.edges))) == 2 # edge labels may break something
+    
     # graph = nx.erdos_renyi_graph(n=50, p=0.9)
     print(graph)
 
-    Gcomp = graphlet_compress(graph, max_graphlet_sz=7, sort_relative=False, symmetry_encoding=PermutationEncoding.CYCLES)
-    print(f"compressed graph size: {Gcomp.size} ({Gcomp.size / 2} pairs)")
+    Gcomp = graphlet_compress(graph, max_graphlet_sz=5, sort_relative=True,
+                              symmetry_encoding=perm_encoding, progress_bar=True)
+    print(Gcomp)
+
+    # G2 = Gcomp.decompress()
+
+    Gcomp.serialize_to("test.bin")
+
+    Gcomp2 = SymmetryCompressedPartition.deserialize_from("test.bin", perm_encoding)
+    print(Gcomp2)
+    
+    G2 = Gcomp2.decompress()
+    print(G2)
+    print("Graphs are isomorphic:", nx.is_isomorphic(graph, G2))
