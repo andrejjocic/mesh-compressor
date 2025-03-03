@@ -1,7 +1,8 @@
 from typing import *
 from pathlib import Path
 from mesh_utils import skeleton
-from plyfile import PlyData
+from plyfile import PlyData, PlyElement
+import numpy as np
 from symmetry_compressor import compress_bipartite, CachingMode
 from collections import defaultdict
 from matplotlib import pyplot as plt
@@ -28,13 +29,40 @@ def print_plyfiles(folder: str):
             continue
 
 
-def relative_conn_size(conn_size_bytes: int, n_verts: int, n_faces: int) -> tuple[float, float]:
+def relative_conn_size(mesh: PlyData, conn_size_bytes: int) -> tuple[float, float]:
     """return (bpv, bpf)"""
     size_bits = conn_size_bytes * 8
+    n_verts = num_verts(mesh)
+    n_faces = num_faces(mesh)
+
     bpv = size_bits / n_verts
     bpf = size_bits / n_faces
     return bpv, bpf
 
+def write_connectivity(mesh: PlyData, output_path: str, binary: bool = False) -> None:
+    """Write face connectivity data to a PLY file"""
+    face_list = [(face.tolist(),) for face in mesh['face']['vertex_indices']]
+    faces_element = PlyElement.describe(
+        np.array(face_list, dtype=[('vertex_indices', 'i4', (3,))]), 
+        'face'
+    )
+    PlyData([faces_element], text=not binary).write(output_path)
+
+
+num_faces = lambda mesh: len(mesh['face'].data)
+num_verts = lambda mesh: len(mesh['vertex'].data)
+
+def analyze_mesh_connectivity(original_mesh: PlyData, compressed_path: Path) -> None:
+    """Analyze connectivity data of original and compressed mesh files"""
+    
+    if compressed_path.exists():
+        compressed_size = compressed_path.stat().st_size
+        print(f"Compressed connectivity size: {compressed_size} bytes")
+        bpv, bpf = relative_conn_size(original_mesh, compressed_size)
+        print(f"bpv | bpf: {round(bpv)} | {round(bpf)}")
+    else:
+        print(f"{compressed_path} not found")
+    
 
 
 def something():
@@ -83,21 +111,30 @@ def something():
         for j, v in enumerate(time):
             t = round(v, 1) if v < 5 else round(v)
             ax[i].text(list(data.keys())[j], 0.05 * 100, f"{t} s", ha='center', color="white", fontsize=13)
-
+ 
     plt.tight_layout()
     plt.show()
+
 
 
 if __name__ == '__main__':
     # print_plyfiles('data/MeshLab_sample_meshes')
 
-    # graph, _ = skeleton(PlyData.read(r"data\MeshLab_sample_meshes\T.ply"))
-    # print(graph)
-    # for caching_mode in [CachingMode.STATIC, CachingMode.DYNAMIC]:
-    #     print(f"compressing with caching mode {caching_mode}")
-    #     C = compress_bipartite(graph, caching_mode)
-    #     print(C)
+    test_meshes = "bunny2 bunny10k bunny70k screwdriver".split()
 
-    bpv, bpf = relative_conn_size(1_022, n_verts=432, n_faces=755)
-    print("bits per vertex:", bpv)
-    print("bits per triangle:", bpf)
+    for mesh_name in test_meshes:
+        mesh_path = Path(f"data/MeshLab_sample_meshes/{mesh_name}.ply")
+        plydata = PlyData.read(mesh_path)
+        n_faces = num_faces(plydata)
+        n_verts = num_verts(plydata)
+
+        print(f"Mesh: {mesh_name} | Faces: {n_faces} | Vertices: {n_verts}")
+        continue
+        compressed_path = Path(mesh_path).parent / f"{mesh_name}_AtlasCompressed" / f"{mesh_name}_3-gons.conn.zst"
+
+        print(f"Mesh: {mesh_name}")
+        analyze_mesh_connectivity(plydata, compressed_path)
+        print("-" * 50)
+        # conn_path = Path(f"data/MeshLab_sample_meshes/wireframes/{mesh_name}_conn_only.ply.zst")
+        # conn_size = conn_path.stat().st_size
+        # print(mesh_name, *(round(sz) for sz in relative_conn_size(plydata, conn_size)))

@@ -99,6 +99,7 @@ class VertexPermutation:
 SIZEOF_NUM = 4 # bytes
 NUMBER_FMT = "<I" # little-endian unsigned int (4 bytes)
 seq_fmt = lambda n: NUMBER_FMT[0] + n*NUMBER_FMT[1] # sequence of n numbers
+# NOTE: f"<{n}I" should work fine??
 
 class PermutationEncoding(Enum):
     """different ways to encode a permutation"""
@@ -370,7 +371,7 @@ class SymmetryCompressedPartition:
         self.compressed_graphlets.append(compressed_template.remapped_nodes(node_mapping))
 
     def decompress(self, destructive=False) -> nx.Graph:
-        G = self.residual.copy()
+        G = self.residual.copy() if not destructive else self.residual
         for C in self.compressed_graphlets:
             G.add_edges_from(C.decompress(destructive).edges)
 

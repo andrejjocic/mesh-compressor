@@ -92,15 +92,15 @@ def assertEqualGraphs(g1: nx.Graph, g2: nx.Graph):
     assert set(g1.nodes) == set(g2.nodes)
     assert set(g1.edges) == set(g2.edges)
 
+CONNECTIVITY_FILE_EXTENSION = "conn"
 
-def compress_ply(input_file: str, atlas: bool, encode_holes=True, verbose=False, **compressor_kwargs):
-    """Compress a PLY file's connectivity data using graphlet atlas compression."""
+def compress_ply(input_file: str, atlas: bool, encode_holes=True, verbose=False, **compressor_kwargs) -> int:
+    """Compress a PLY file's connectivity data using graphlet atlas compression.
+    Returns the uncompressed size of the face data (connectivity + attrs.) in bytes."""
+
     in_file = Path(input_file)
     if not in_file.exists():
         raise FileNotFoundError(f"File {in_file} not found!")
-    
-    orig_size = in_file.stat().st_size
-    if verbose: print(f"original size: {orig_size} bytes")
 
     out_folder = in_file.parent / f"{in_file.stem}_{'Atlas' if atlas else 'Symmetry'}Compressed"
     out_folder.mkdir(exist_ok=True)
@@ -128,17 +128,16 @@ def compress_ply(input_file: str, atlas: bool, encode_holes=True, verbose=False,
     if verbose: print(f"vertices size: {vtxdata_sz} bytes")
 
     # compress the connectivity data
-    conn_path = out_folder / f"{in_file.stem}_{face_degree}-gons.acgf"
+    conn_path = out_folder / f"{in_file.stem}_{face_degree}-gons.{CONNECTIVITY_FILE_EXTENSION}"
 
     if atlas:
         wf_comp = graphlets.compress_subgraphlets(wireframe, **compressor_kwargs)
         wf_comp.serialize(conn_path)
     else:
-        wf_comp = symm.graphlet_compress(wireframe, symmetry_encoding=symm.PermutationEncoding.CYCLES, **compressor_kwargs)
+        wf_comp = symm.graphlet_compress(wireframe, progress_bar=True,
+                                         symmetry_encoding=symm.PermutationEncoding.CYCLES, **compressor_kwargs)
         # TODO: support other symmetry encodings
         wf_comp.serialize_to(conn_path)
-
-    print(f"wireframe compressed to {wf_comp}")
 
     if encode_holes:
         if verbose: print("checking for holes in the mesh...")
@@ -155,23 +154,17 @@ def compress_ply(input_file: str, atlas: bool, encode_holes=True, verbose=False,
             for hole in holes:
                 f.write(struct.pack("<I", len(hole))) # NOTE: not needed if only supporting regular meshes
                 f.write(struct.pack(f"<{len(hole)}I", *hole))
-
-
-    graph_size = conn_path.stat().st_size
-    if verbose: print(f"graph size: {graph_size} bytes")
-    if verbose: print(f"total size: {vtxdata_sz + graph_size} bytes")
     
     print(f"output files in {out_folder}")
-    if not ignored_props:
-        conn_size = orig_size - vtxdata_sz
-        conn_ratio = graph_size / conn_size
-        print(f"connectivity zipped to {100 * conn_ratio:.1f}%")
+    face_data_sz = in_file.stat().st_size - vtxdata_sz
 
-        total_ratio = (vtxdata_sz + graph_size) / orig_size
-        print(f"total size reduced to {100 * total_ratio:.1f}%")
-        return 1 - total_ratio # relative efficiency
-    else:
-        return None
+    if not ignored_props:
+        graph_size = conn_path.stat().st_size
+        conn_ratio = graph_size / face_data_sz
+        print(f"connectivity zipped to {100 * conn_ratio:.1f}%")
+    
+    return face_data_sz
+
 
 
 def cycles(graph: nx.Graph, length: int, ensure_chordless: bool) -> Iterator[List[int]]:
@@ -259,7 +252,7 @@ def decompress_ply(folder: str, out_name: str, atlas: bool, pbar=False, set_orie
         raise FileNotFoundError(f"Folder {folder} not found!")
     
     vtx_path: Path = next(folder.glob("*_vertices.ply")) # TODO: proper error reporting
-    conn_path: Path = next(folder.glob("*.acgf"))
+    conn_path: Path = next(folder.glob(f"*.{CONNECTIVITY_FILE_EXTENSION}"))
 
     # load vertex data
     plydata = PlyData.read(vtx_path)
@@ -281,6 +274,7 @@ def decompress_ply(folder: str, out_name: str, atlas: bool, pbar=False, set_orie
     # check for holes in the mesh
     if bytes_read < conn_path.stat().st_size:
         SIZEOF_INT = 4 # bytes
+        # FIXME: force consitent integer coding (as in SymmetryCompressedPartition)
         with open(conn_path, "rb") as f:
             f.seek(bytes_read)
             holes = set()
